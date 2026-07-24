@@ -31,8 +31,69 @@ export interface SidebarItem {
   is_active: number;
 }
 
+// ── User & Role Management (2-Table Setup) ───────────────────
+export interface Role {
+  id: number;
+  name: string;
+  description?: string;
+  created_at: string;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  nim: string | null;
+  name: string;
+  role_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserWithRole extends User {
+  role_name: string;
+}
+
 export async function initDb() {
   try {
+    // Enable foreign keys
+    await client.execute(`PRAGMA foreign_keys = ON;`);
+
+    // 1. Roles Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS roles (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL UNIQUE,
+        description TEXT,
+        created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Seed default roles
+    await client.execute(`
+      INSERT OR IGNORE INTO roles (id, name, description) VALUES
+      (1, 'admin', 'Administrator with full access'),
+      (2, 'student', 'Student user access'),
+      (3, 'lecturer', 'Lecturer user access'),
+      (4, 'intern', 'Intern with administrative access')
+    `);
+
+
+    // 2. Users Table (FK referencing roles.id)
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        email      TEXT    NOT NULL UNIQUE,
+        nim        TEXT    UNIQUE,
+        name       TEXT    NOT NULL,
+        role_id    INTEGER NOT NULL DEFAULT 2,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE RESTRICT
+      )
+    `);
+
+
+
     // New buttons table
     await client.execute(`
       CREATE TABLE IF NOT EXISTS buttons (
@@ -70,3 +131,4 @@ export async function initDb() {
     console.error("Failed to initialize database:", error);
   }
 }
+

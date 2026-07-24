@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import * as Icons from "@phosphor-icons/react";
 import { Button } from "@/lib/db";
 import {
+  verifyUserCredentials,
   verifyPasscode,
   getButtons,
   addButton,
@@ -123,9 +124,11 @@ function AdminPanel({
   onRefresh: () => void;
 }) {
   // Auth state
-  const [passcode, setPasscode] = useState("");
+  const [email, setEmail] = useState("");
+  const [nim, setNim] = useState("");
   const [verified, setVerified] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [userInfo, setUserInfo] = useState<{ name: string; role_name: string } | null>(null);
 
   // Button list state
   const [allButtons, setAllButtons] = useState<Button[]>(initialButtons);
@@ -190,8 +193,8 @@ function AdminPanel({
     setHomeSaveMsg("");
     try {
       const [r1, r2] = await Promise.all([
-        updateSetting(passcode, "home_content_type", homeContentType),
-        updateSetting(passcode, "home_content_value", homeContentValue),
+        updateSetting("", "home_content_type", homeContentType),
+        updateSetting("", "home_content_value", homeContentValue),
       ]);
       if (r1.success && r2.success) {
         setHomeSaveMsg("Saved!");
@@ -218,15 +221,19 @@ function AdminPanel({
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
-    const ok = await verifyPasscode(passcode);
-    if (ok) {
+    const res = await verifyUserCredentials(email, nim);
+    if (res.success) {
       setVerified(true);
+      if (res.user) {
+        setUserInfo({ name: res.user.name, role_name: res.user.role_name });
+      }
       await reload();
       await loadHomeSettings();
     } else {
-      setAuthError("Incorrect passcode. Please try again.");
+      setAuthError(res.error || "Invalid Email or NIM.");
     }
   };
+
 
   // Open modal
   const openModal = (btn: Button | null) => {
@@ -261,8 +268,8 @@ function AdminPanel({
 
     try {
       const res = editingBtn?.id
-        ? await updateButton(passcode, editingBtn.id, data)
-        : await addButton(passcode, data);
+        ? await updateButton("", editingBtn.id, data)
+        : await addButton("", data);
 
       if (res.success) {
         setIsModalOpen(false);
@@ -282,7 +289,7 @@ function AdminPanel({
     if (!confirm("Delete this button?")) return;
     setIsSaving(true);
     try {
-      const res = await deleteButton(passcode, id);
+      const res = await deleteButton("", id);
       if (res.success) await reload();
       else alert(res.error);
     } catch (err: any) {
@@ -302,7 +309,7 @@ function AdminPanel({
     setIsSaving(true);
     try {
       await reorderButtons(
-        passcode,
+        "",
         arr.map((b) => b.id)
       );
       onRefresh();
@@ -317,34 +324,52 @@ function AdminPanel({
   if (!verified) {
     return (
       <div className="passcode-container">
-        <form className="passcode-card" onSubmit={handleLogin}>
+        <form className="passcode-card" onSubmit={handleLogin} autoComplete="off">
           <div className="passcode-icon">
             <Icons.LockKey size={28} weight="bold" />
           </div>
-          <h2 className="card-title">Admin Access</h2>
-          <p className="banner-welcome" style={{ color: "var(--text-secondary)" }}>
-            Enter your passcode to manage GAT App buttons.
+          <h2 className="card-title">System Settings Access</h2>
+          <p className="banner-welcome" style={{ color: "var(--text-secondary)", fontSize: "13px" }}>
+            Enter your Email and NIM to verify your admin privileges.
           </p>
 
-          <div className="form-group">
-            <label className="form-label" htmlFor="admin-passcode">
-              Passcode
+          <div className="form-group" style={{ marginBottom: 12 }}>
+            <label className="form-label" htmlFor="admin-email">
+              Email Address
             </label>
             <input
-              id="admin-passcode"
-              type="password"
+              id="admin-email"
+              type="email"
               className="form-input"
-              placeholder="Enter passcode…"
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
+              placeholder="user@domain.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="off"
               autoFocus
+              required
             />
           </div>
 
-          {authError && <div className="error-message">{authError}</div>}
+          <div className="form-group">
+            <label className="form-label" htmlFor="admin-nim">
+              NIM
+            </label>
+            <input
+              id="admin-nim"
+              type="text"
+              className="form-input"
+              placeholder="Enter NIM"
+              value={nim}
+              onChange={(e) => setNim(e.target.value)}
+              autoComplete="off"
+              required
+            />
+          </div>
 
-          <button type="submit" className="btn-primary" style={{ width: "100%" }}>
-            Unlock
+          {authError && <div className="error-message" style={{ marginTop: 12 }}>{authError}</div>}
+
+          <button type="submit" className="btn-primary" style={{ width: "100%", marginTop: 16 }}>
+            Authenticate & Access
           </button>
         </form>
       </div>
@@ -361,6 +386,11 @@ function AdminPanel({
             <h1 className="config-title">GAT App Admin</h1>
             <p className="config-subtitle">
               Configure GAT App application buttons and home page content.
+              {userInfo && (
+                <span style={{ display: "block", color: "var(--primary-color)", fontWeight: 600, marginTop: 4 }}>
+                  Logged in as: {userInfo.name} ({userInfo.role_name})
+                </span>
+              )}
             </p>
           </div>
           <div style={{ display: "flex", gap: 12 }}>
@@ -369,12 +399,15 @@ function AdminPanel({
               onClick={async () => {
                 await logout();
                 setVerified(false);
-                setPasscode("");
+                setEmail("");
+                setNim("");
+                setUserInfo(null);
               }}
             >
               <Icons.LockKey size={14} weight="bold" />
               &nbsp;Lock
             </button>
+
             {activeTab === "apps" && (
               <button className="btn-primary" onClick={() => openModal(null)}>
                 <Icons.Plus size={14} weight="bold" />

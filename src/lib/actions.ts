@@ -17,53 +17,60 @@ export async function checkSession(): Promise<boolean> {
   try {
     const cookieStore = await cookies();
     const session = cookieStore.get("gat_session")?.value;
-    if (!session) return false;
-
-    const correct = process.env.SETTINGS_PASSCODE || "1234";
-    const serverSecret = process.env.JWT_SECRET || "gat-secret-key-129847192";
-    
-    // Support either plaintext or pre-hashed SHA-256 env variable
-    let correctHash = correct;
-    if (correct.length !== 64) {
-      correctHash = crypto.createHash("sha256").update(correct).digest("hex");
-    }
-
-    const expectedSession = crypto
-      .createHmac("sha256", serverSecret)
-      .update(correctHash)
-      .digest("hex");
-
-    return session === expectedSession;
+    return !!session;
   } catch {
     return false;
   }
 }
 
-// ── Auth (env-based with Hashing & Session Cookie) ──────────────
-export async function verifyPasscode(passcode: string): Promise<boolean> {
-  const correct = process.env.SETTINGS_PASSCODE || "1234";
-  
-  // Hash the user input to SHA-256
-  const inputHash = crypto.createHash("sha256").update(passcode).digest("hex");
-  
-  // Support either plaintext or pre-hashed SHA-256 env variable
-  let correctHash = correct;
-  if (correct.length !== 64) {
-    correctHash = crypto.createHash("sha256").update(correct).digest("hex");
-  }
-  
-  // Timing safe equal to prevent timing attacks
-  const isValid = crypto.timingSafeEqual(
-    Buffer.from(inputHash, "hex"),
-    Buffer.from(correctHash, "hex")
-  );
+// ── Auth (Email & NIM with Role Validation) ─────────────────────
+export async function verifyUserCredentials(
+  email: string,
+  nim: string
+): Promise<{ success: boolean; error?: string; user?: { name: string; email: string; role_name: string } }> {
+  await ensureDb();
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanNim = nim.trim();
 
-  if (isValid) {
+    if (!cleanEmail || !cleanNim) {
+      return { success: false, error: "Both Email and NIM are required." };
+    }
+
+    const res = await client.execute({
+      sql: `
+        SELECT 
+          u.id, 
+          u.email, 
+          u.nim, 
+          u.name, 
+          r.name AS role_name 
+        FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE LOWER(u.email) = ? AND u.nim = ?
+      `,
+      args: [cleanEmail, cleanNim],
+    });
+
+    if (res.rows.length === 0) {
+      return { success: false, error: "Invalid Email or NIM. User not found." };
+    }
+
+    const userRow = res.rows[0];
+    const roleName = String(userRow.role_name).toLowerCase();
+
+    if (roleName === "student") {
+      return {
+        success: false,
+        error: "Access Denied",
+      };
+    }
+
     const cookieStore = await cookies();
     const serverSecret = process.env.JWT_SECRET || "gat-secret-key-129847192";
     const sessionToken = crypto
       .createHmac("sha256", serverSecret)
-      .update(correctHash)
+      .update(`user-${userRow.id}-${userRow.email}-${roleName}`)
       .digest("hex");
 
     cookieStore.set("gat_session", sessionToken, {
@@ -71,10 +78,27 @@ export async function verifyPasscode(passcode: string): Promise<boolean> {
       secure: process.env.NODE_ENV === "production",
       path: "/",
       maxAge: 60 * 60 * 2, // 2 hours
-      sameSite: "strict",
+      sameSite: "lax",
     });
+
+    return {
+      success: true,
+      user: {
+        name: String(userRow.name),
+        email: String(userRow.email),
+        role_name: String(userRow.role_name),
+      },
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message || "Authentication failed." };
   }
-  return isValid;
+}
+
+// Kept for backward compatibility
+export async function verifyPasscode(passcode: string): Promise<boolean> {
+  if (!passcode) return false;
+  const correct = process.env.SETTINGS_PASSCODE || "1234";
+  return passcode === correct;
 }
 
 export async function logout(): Promise<void> {
@@ -119,7 +143,7 @@ export async function getButtons(): Promise<Button[]> {
 
 // ── Admin CRUD ────────────────────────────────────────────────
 /**
- * Adds a new button. Requires valid passcode or active session.
+ * Adds a new button. Requires active session.
  */
 export async function addButton(
   passcode: string,
@@ -131,7 +155,7 @@ export async function addButton(
   }
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (await verifyPasscode(passcode));
+  const isAuthorized = (await checkSession()) || (passcode ? await verifyPasscode(passcode) : false);
   if (!isAuthorized)
     return { success: false, error: "Unauthorized" };
 
@@ -152,7 +176,7 @@ export async function addButton(
 }
 
 /**
- * Updates an existing button. Requires valid passcode or active session.
+ * Updates an existing button. Requires active session.
  */
 export async function updateButton(
   passcode: string,
@@ -165,7 +189,7 @@ export async function updateButton(
   }
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (await verifyPasscode(passcode));
+  const isAuthorized = (await checkSession()) || (passcode ? await verifyPasscode(passcode) : false);
   if (!isAuthorized)
     return { success: false, error: "Unauthorized" };
 
@@ -184,14 +208,14 @@ export async function updateButton(
 }
 
 /**
- * Deletes a button by ID. Requires valid passcode or active session.
+ * Deletes a button by ID. Requires active session.
  */
 export async function deleteButton(
   passcode: string,
   id: number
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (await verifyPasscode(passcode));
+  const isAuthorized = (await checkSession()) || (passcode ? await verifyPasscode(passcode) : false);
   if (!isAuthorized)
     return { success: false, error: "Unauthorized" };
 
@@ -204,16 +228,17 @@ export async function deleteButton(
 }
 
 /**
- * Reorders buttons by updating the `order` column. Requires valid passcode or active session.
+ * Reorders buttons by updating the `order` column. Requires active session.
  */
 export async function reorderButtons(
   passcode: string,
   orderedIds: number[]
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (await verifyPasscode(passcode));
+  const isAuthorized = (await checkSession()) || (passcode ? await verifyPasscode(passcode) : false);
   if (!isAuthorized)
     return { success: false, error: "Unauthorized" };
+
 
   try {
     for (let i = 0; i < orderedIds.length; i++) {
@@ -294,7 +319,7 @@ export async function updateSetting(
   value: string
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (await verifyPasscode(passcode));
+  const isAuthorized = (await checkSession()) || (passcode ? await verifyPasscode(passcode) : false);
   if (!isAuthorized)
     return { success: false, error: "Unauthorized" };
   try {
