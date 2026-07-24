@@ -7,7 +7,7 @@ import Home from "@/components/Home";
 import MainContent from "@/components/MainContent";
 import { Button } from "@/lib/db";
 import { getButtons } from "@/lib/actions";
-import * as Icons from "@phosphor-icons/react";
+import { DotsNine, ArrowLeft } from "@phosphor-icons/react";
 
 // Helper to generate URL-friendly slug
 export function slugify(text: string): string {
@@ -111,7 +111,7 @@ export default function GatAppPage({ params }: PageProps) {
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
           title="Toggle Menu"
         >
-          <Icons.DotsNine size={22} weight="bold" />
+          <DotsNine size={22} weight="bold" />
         </button>
 
         <div
@@ -134,7 +134,7 @@ export default function GatAppPage({ params }: PageProps) {
             onClick={handleGoHome}
             style={{ marginLeft: "auto", padding: "6px 14px", fontSize: 13 }}
           >
-            <Icons.ArrowLeft size={14} weight="bold" />
+            <ArrowLeft size={14} weight="bold" />
             &nbsp;Back
           </button>
         )}

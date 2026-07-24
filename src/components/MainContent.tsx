@@ -1,7 +1,20 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import * as Icons from "@phosphor-icons/react";
+import {
+  ArrowSquareOut,
+  LockKey,
+  Plus,
+  CaretUp,
+  CaretDown,
+  PencilSimple,
+  Trash,
+  AppWindow,
+  House,
+  Code,
+  FrameCorners,
+  Cube,
+} from "@phosphor-icons/react";
 import { Button } from "@/lib/db";
 import {
   verifyUserCredentials,
@@ -92,7 +105,7 @@ function ContentRenderer({
               gap: 4,
             }}
           >
-            <Icons.ArrowSquareOut size={12} weight="bold" />
+            <ArrowSquareOut size={12} weight="bold" />
             Open in New Tab
           </a>
         </div>
@@ -326,7 +339,7 @@ function AdminPanel({
       <div className="passcode-container">
         <form className="passcode-card" onSubmit={handleLogin} autoComplete="off">
           <div className="passcode-icon">
-            <Icons.LockKey size={28} weight="bold" />
+            <LockKey size={28} weight="bold" />
           </div>
           <h2 className="card-title">System Settings Access</h2>
           <p className="banner-welcome" style={{ color: "var(--text-secondary)", fontSize: "13px" }}>
@@ -404,13 +417,13 @@ function AdminPanel({
                 setUserInfo(null);
               }}
             >
-              <Icons.LockKey size={14} weight="bold" />
+              <LockKey size={14} weight="bold" />
               &nbsp;Lock
             </button>
 
             {activeTab === "apps" && (
               <button className="btn-primary" onClick={() => openModal(null)}>
-                <Icons.Plus size={14} weight="bold" />
+                <Plus size={14} weight="bold" />
                 &nbsp;Add Button
               </button>
             )}
@@ -424,7 +437,7 @@ function AdminPanel({
             className={`settings-tab-btn ${activeTab === "apps" ? "active" : ""}`}
             onClick={() => setActiveTab("apps")}
           >
-            <Icons.AppWindow size={16} weight="bold" />
+            <AppWindow size={16} weight="bold" />
             Sidebar Buttons
           </button>
           <button
@@ -432,7 +445,7 @@ function AdminPanel({
             className={`settings-tab-btn ${activeTab === "home" ? "active" : ""}`}
             onClick={() => setActiveTab("home")}
           >
-            <Icons.House size={16} weight="bold" />
+            <House size={16} weight="bold" />
             Home Page Content
           </button>
         </div>
@@ -452,7 +465,7 @@ function AdminPanel({
                       onClick={() => handleMove(idx, "up")}
                       title="Move Up"
                     >
-                      <Icons.CaretUp size={14} weight="bold" />
+                      <CaretUp size={14} weight="bold" />
                     </button>
                     <button
                       className="reorder-btn"
@@ -460,7 +473,7 @@ function AdminPanel({
                       onClick={() => handleMove(idx, "down")}
                       title="Move Down"
                     >
-                      <Icons.CaretDown size={14} weight="bold" />
+                      <CaretDown size={14} weight="bold" />
                     </button>
                   </div>
 
@@ -494,14 +507,14 @@ function AdminPanel({
                       onClick={() => openModal(btn)}
                       title="Edit"
                     >
-                      <Icons.PencilSimple size={16} weight="bold" />
+                      <PencilSimple size={16} weight="bold" />
                     </button>
                     <button
                       className="btn-icon delete"
                       onClick={() => handleDelete(btn.id)}
                       title="Delete"
                     >
-                      <Icons.Trash size={16} weight="bold" />
+                      <Trash size={16} weight="bold" />
                     </button>
                   </div>
                 </div>
@@ -542,7 +555,7 @@ function AdminPanel({
                 className={`home-mode-btn ${homeContentType === "html" ? "active" : ""}`}
                 onClick={() => setHomeContentType("html")}
               >
-                <Icons.Code size={16} weight="bold" />
+                <Code size={16} weight="bold" />
                 Custom HTML
               </button>
               <button
@@ -550,7 +563,7 @@ function AdminPanel({
                 className={`home-mode-btn ${homeContentType === "embed" ? "active" : ""}`}
                 onClick={() => setHomeContentType("embed")}
               >
-                <Icons.FrameCorners size={16} weight="bold" />
+                <FrameCorners size={16} weight="bold" />
                 Embed (iFrame URL)
               </button>
             </div>

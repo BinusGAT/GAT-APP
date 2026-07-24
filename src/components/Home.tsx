@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { getSetting, getButtons } from "@/lib/actions";
+import { getSetting } from "@/lib/actions";
 
 export default function Home() {
   const [contentType, setContentType] = useState<"html" | "embed" | "">("");
@@ -12,16 +12,12 @@ export default function Home() {
   useEffect(() => {
     async function loadHomeContent() {
       try {
-        const [type, value, buttonData] = await Promise.all([
+        const [type, value] = await Promise.all([
           getSetting("home_content_type"),
           getSetting("home_content_value"),
-          getButtons(),
         ]);
         setContentType((type as "html" | "embed") || "");
         setContentValue(value || "");
-        if (typeof window !== "undefined") {
-          (window as any).__GAT_BUTTONS__ = buttonData;
-        }
       } catch (err) {
         console.error("Failed to load home page content settings:", err);
       } finally {

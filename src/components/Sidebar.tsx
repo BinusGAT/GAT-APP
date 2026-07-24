@@ -1,21 +1,68 @@
 "use client";
 
 import React from "react";
-import * as Icons from "@phosphor-icons/react";
+import {
+  ArrowSquareOut,
+  FrameCorners,
+  Code,
+  X,
+  Gear,
+  Cube,
+  House,
+  GraduationCap,
+  FileText,
+  Translate,
+  Books,
+  Trophy,
+  Lifebuoy,
+  Rocket,
+  Compass,
+  ShareNetwork,
+  Scroll,
+  User,
+  Envelope,
+  Calendar,
+  Shield,
+  Clock,
+  Notebook,
+  Chat,
+  Bookmark,
+  AppWindow,
+  Globe,
+  Database,
+  Browsers,
+  PresentationChart,
+  ChartBar,
+  Lightning,
+  Leaf,
+  Star,
+  Heart,
+} from "@phosphor-icons/react";
+import type { IconProps } from "@phosphor-icons/react";
+import type { ComponentType } from "react";
 import { Button } from "@/lib/db";
 
 // ── Icon helper (exported so Home.tsx can reuse it) ───────────
+const ICON_MAP: Record<string, ComponentType<IconProps>> = {
+  ArrowSquareOut, FrameCorners, Code, X, Gear, Cube, House,
+  GraduationCap, FileText, Translate, Books, Trophy, Lifebuoy,
+  Rocket, Compass, ShareNetwork, Scroll, User, Envelope, Calendar,
+  Shield, Clock, Notebook, Chat, Bookmark, AppWindow, Globe,
+  Database, Browsers, PresentationChart, ChartBar, Lightning,
+  Leaf, Star, Heart,
+};
+
 export function getIconComponent(iconName: string, size = 20, weight: "regular" | "bold" | "fill" = "regular") {
-  const IconComponent = (Icons as any)[iconName];
+  const IconComponent = ICON_MAP[iconName];
   if (IconComponent) return <IconComponent size={size} weight={weight} />;
-  return <Icons.Cube size={size} weight={weight} />;
+  return <Cube size={size} weight={weight} />;
 }
 
 // ── Source type metadata ──────────────────────────────────────
 const SOURCE_META = {
-  link:  { icon: <Icons.ArrowSquareOut size={11} weight="bold" />, color: "#3b82f6" },
-  embed: { icon: <Icons.FrameCorners   size={11} weight="bold" />, color: "#10b981" },
-  code:  { icon: <Icons.Code           size={11} weight="bold" />, color: "#8b5cf6" },
+  link:  { icon: <ArrowSquareOut size={11} weight="bold" />, color: "#3b82f6" },
+  embed: { icon: <FrameCorners   size={11} weight="bold" />, color: "#10b981" },
+  code:  { icon: <Code           size={11} weight="bold" />, color: "#8b5cf6" },
 };
 
 // ── Gradient classes ──────────────────────────────────────────
@@ -62,7 +109,7 @@ export default function Sidebar({
             title="Close menu"
             style={{ width: 32, height: 32 }}
           >
-            <Icons.X size={18} weight="bold" />
+            <X size={18} weight="bold" />
           </button>
         </div>
         <div className="sidebar-title">GAT Applications</div>
@@ -126,7 +173,7 @@ export default function Sidebar({
           onClick={onOpenAdmin}
         >
           <div className="menu-item-icon-container">
-            <Icons.Gear size={16} weight="bold" />
+            <Gear size={16} weight="bold" />
           </div>
           <span>System Settings</span>
         </button>

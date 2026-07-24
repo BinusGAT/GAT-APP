@@ -1,0 +1,15 @@
+# GAT App
+
+> A centralized gateway to all GAT services.
+
+## Overview
+GAT App is a centralized gateway web application providing quick access to various GAT services and tools, complete with passcode-protected administration settings.
+
+## Core Features
+- Centralized dashboard for accessing GAT web tools and external resources.
+- Customizable sidebar navigation buttons and content embeds.
+- System Settings administration panel for dynamic button and content management.
+
+## Links
+- [Home](/home): Main dashboard and home view.
+- [System Settings](/settings): Administration panel for managing links, content embeds, and settings.
