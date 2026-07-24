@@ -8,6 +8,14 @@ export const client = isTurso
   ? createClient({ url, authToken })
   : createClient({ url: "file:local.db" });
 
+const authUrl = process.env.AUTH_DATABASE_URL || url;
+const authDatabaseToken = process.env.AUTH_DATABASE_TOKEN || authToken;
+const isAuthTurso = !!(authUrl && authDatabaseToken);
+
+export const authClient = isAuthTurso
+  ? createClient({ url: authUrl, authToken: authDatabaseToken })
+  : client;
+
 // ── New: GAT Hub button ──────────────────────────────────────
 export interface Button {
   id: number;
@@ -56,10 +64,11 @@ export interface UserWithRole extends User {
 export async function initDb() {
   try {
     // Enable foreign keys
+    await authClient.execute(`PRAGMA foreign_keys = ON;`);
     await client.execute(`PRAGMA foreign_keys = ON;`);
 
-    // 1. Roles Table
-    await client.execute(`
+    // 1. Roles Table (Central Auth DB)
+    await authClient.execute(`
       CREATE TABLE IF NOT EXISTS roles (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         name        TEXT    NOT NULL UNIQUE,
@@ -69,7 +78,7 @@ export async function initDb() {
     `);
 
     // Seed default roles
-    await client.execute(`
+    await authClient.execute(`
       INSERT OR IGNORE INTO roles (id, name, description) VALUES
       (1, 'admin', 'Administrator with full access'),
       (2, 'student', 'Student user access'),
@@ -77,9 +86,8 @@ export async function initDb() {
       (4, 'intern', 'Intern with administrative access')
     `);
 
-
-    // 2. Users Table (FK referencing roles.id)
-    await client.execute(`
+    // 2. Users Table (Central Auth DB)
+    await authClient.execute(`
       CREATE TABLE IF NOT EXISTS users (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         email      TEXT    NOT NULL UNIQUE,
@@ -92,9 +100,7 @@ export async function initDb() {
       )
     `);
 
-
-
-    // New buttons table
+    // 3. Buttons Table (GAT App Data DB)
     await client.execute(`
       CREATE TABLE IF NOT EXISTS buttons (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,4 +137,3 @@ export async function initDb() {
     console.error("Failed to initialize database:", error);
   }
 }
-

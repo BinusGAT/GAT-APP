@@ -1,6 +1,6 @@
 "use server";
 
-import { client, initDb, Button, SidebarItem } from "./db";
+import { client, authClient, initDb, Button, SidebarItem } from "./db";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 
@@ -37,7 +37,7 @@ export async function verifyUserCredentials(
       return { success: false, error: "Both Email and NIM are required." };
     }
 
-    const res = await client.execute({
+    const res = await authClient.execute({
       sql: `
         SELECT 
           u.id, 
@@ -77,7 +77,7 @@ export async function verifyUserCredentials(
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       path: "/",
-      maxAge: 60 * 60 * 2, // 2 hours
+      maxAge: 60 * 60 * 8, // 8 hours
       sameSite: "lax",
     });
 
