@@ -221,19 +221,27 @@ body {
    ============================================================ */
 .app-container {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
 }
 
-.main-viewport {
+.main-wrapper {
+  flex: 1;
   display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.main-content {
   flex: 1;
   height: calc(100vh - 64px);
-  width: 100%;
+  overflow-y: auto;
+  min-width: 0;
   position: relative;
-  overflow: hidden;
 }
 
 /* ============================================================
@@ -247,7 +255,7 @@ body {
   align-items: center;
   padding: 0 24px;
   gap: 16px;
-  z-index: 130;
+  z-index: 90;
   box-shadow: var(--shadow-sm);
   flex-shrink: 0;
 }
@@ -316,58 +324,51 @@ body {
 }
 
 /* ============================================================
-   SIDEBAR DRAWER
+   SIDEBAR DRAWER (Full height top-to-bottom push layout)
    ============================================================ */
 .sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
+  position: relative;
   width: 280px;
+  height: 100vh;
+  flex-shrink: 0;
   background: var(--sidebar);
   border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
-  height: 100%;
-  z-index: 160;
+  z-index: 100;
   box-shadow: 4px 0 20px rgba(0, 0, 0, 0.05);
-  transform: translateX(-100%);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-left: -280px;
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar.open {
-  transform: translateX(0);
+  margin-left: 0;
 }
 
-/* Backdrop Overlay */
+/* Backdrop Overlay — Disabled so right content is fully visible & interactive */
 .sidebar-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  z-index: 140;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-.sidebar-overlay.open {
-  opacity: 1;
-  pointer-events: auto;
+  display: none !important;
 }
 
 .sidebar-header {
-  padding: 24px 20px 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  padding: 0 20px;
   border-bottom: 1px solid var(--sidebar-border);
-}
-
-.sidebar-header-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
+  height: 64px;
+  min-height: 64px;
+  flex-shrink: 0;
+}
+
+.sidebar-title,
+.sidebar-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 16px 20px 6px 20px;
 }
 
 .sidebar .header-candybox-btn {
@@ -425,30 +426,8 @@ body {
   letter-spacing: -0.02em;
 }
 
-.sidebar .logo-gat {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 32px;
-  color: var(--sidebar-foreground);
-  letter-spacing: -0.02em;
-}
 
-.sidebar .logo-app {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 32px;
-  color: var(--brand-orange);
-  letter-spacing: -0.02em;
-}
 
-.sidebar-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--sidebar-foreground);
-  opacity: 0.6;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
 
 /* ============================================================
    SIDEBAR MENU
@@ -1524,4 +1503,425 @@ body {
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/* ============================================================
+   PORTAL APPS VIEW (Microsoft My Apps style)
+   ============================================================ */
+.portal-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-primary);
+  overflow-y: auto;
+}
+
+.portal-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 clamp(20px, 3vw, 48px);
+  height: 54px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.portal-category-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 48px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 clamp(20px, 3vw, 48px);
+  flex-shrink: 0;
+}
+
+.portal-tabs-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(16px, 2.5vw, 32px);
+  height: 100%;
+}
+
+.portal-tab {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  position: relative;
+  user-select: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  transition: color 0.15s ease;
+}
+
+.portal-tab:hover {
+  color: var(--text-primary);
+}
+
+.portal-tab.active {
+  color: var(--primary-color);
+}
+
+.portal-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2.5px;
+  background: var(--primary-color);
+  border-radius: 2px 2px 0 0;
+}
+
+.portal-app-category-badge {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--border-color);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.portal-search-wrapper {
+  position: relative;
+  width: clamp(200px, 25vw, 360px);
+  display: flex;
+  align-items: center;
+}
+
+.portal-search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.portal-search-input {
+  width: 100%;
+  padding: 7px 14px 7px 36px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.portal-search-input:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.portal-content-area {
+  padding: clamp(32px, 4vw, 56px) clamp(24px, 4vw, 64px);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.portal-app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(130px, 11vw, 170px), 1fr));
+  gap: clamp(36px, 4.5vw, 60px) clamp(24px, 3vw, 44px);
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  justify-items: center;
+}
+
+.portal-app-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  cursor: pointer;
+  padding: clamp(12px, 1.5vw, 18px) clamp(8px, 1vw, 16px);
+  border-radius: 16px;
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), background-color 0.15s ease, box-shadow 0.2s ease;
+  user-select: none;
+  width: 100%;
+  max-width: clamp(130px, 11vw, 170px);
+}
+
+.portal-app-card:hover {
+  transform: translateY(-4px);
+  background: var(--bg-hover, rgba(0, 0, 0, 0.03));
+}
+
+.portal-app-tile {
+  width: clamp(76px, 6.5vw, 98px);
+  height: clamp(76px, 6.5vw, 98px);
+  border-radius: clamp(16px, 1.5vw, 22px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+  color: var(--primary-color);
+  overflow: hidden;
+  padding: clamp(12px, 1.2vw, 18px);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.portal-app-card:hover .portal-app-tile {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.09);
+  border-color: var(--primary-color);
+}
+
+.portal-app-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.portal-app-fallback-icon {
+  font-weight: 700;
+  font-size: clamp(20px, 1.8vw, 26px);
+  color: var(--primary-color);
+}
+
+.portal-app-title {
+  font-size: clamp(12px, 1vw, 14px);
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  max-width: clamp(120px, 10vw, 150px);
+}
+
+.portal-empty-state {
+  text-align: center;
+  padding: 64px 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ── Header Auth & User Profile Pill (Microsoft style) ── */
+.user-profile-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 6px 8px;
+  border-radius: 24px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.user-avatar-circle {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #EEF2FF;
+  color: #4F46E5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.user-info-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.user-name-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.user-role-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.btn-switch-role {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4F46E5;
+  background: #EEF2FF;
+  border: 1px solid rgba(79, 70, 229, 0.2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.btn-switch-role:hover {
+  background: #4F46E5;
+  color: #ffffff;
+}
+
+.btn-logout-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #DC2626;
+  background: #FEF2F2;
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn-logout-pill:hover {
+  background: #DC2626;
+  color: #ffffff;
+}
+
+/* ── Sidebar Role Box (Theme Matching) ── */
+.sidebar-role-box {
+  margin: 0 0 10px 0;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-role-box-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-role-box-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sidebar-role-change-btn {
+  background: var(--primary-light, #EEF2FF);
+  color: var(--primary-color, #4F46E5);
+  border: 1px solid rgba(79, 70, 229, 0.2);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sidebar-role-change-btn:hover {
+  background: var(--primary-color, #4F46E5);
+  color: #ffffff;
+}
+
+.sidebar-role-box-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.portal-app-category-pill {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  margin-top: 4px;
+}
+
+/* ── Favorites & Pinned Apps ── */
+.portal-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 12px;
+}
+
+.portal-app-card {
+  position: relative;
+}
+
+.portal-app-star-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: all 0.15s ease;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.portal-app-card:hover .portal-app-star-btn,
+.portal-app-star-btn.starred {
+  opacity: 1;
+}
+
+.portal-app-star-btn:hover {
+  transform: scale(1.12);
+  background: #FFFBEB;
 }

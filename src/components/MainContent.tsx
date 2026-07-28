@@ -14,11 +14,18 @@ import {
   Code,
   FrameCorners,
   Cube,
+  Shield,
+  User,
+  MagnifyingGlass,
+  GraduationCap,
+  ChalkboardTeacher,
+  Lightning,
 } from "@phosphor-icons/react";
 import { Button } from "@/lib/db";
 import {
   verifyUserCredentials,
   verifyPasscode,
+  updateSuperadminPasscode,
   getButtons,
   addButton,
   updateButton,
@@ -28,6 +35,11 @@ import {
   updateSetting,
   isSessionValid,
   logout,
+  getUsers,
+  getRoles,
+  createUser,
+  updateUser,
+  deleteUser,
 } from "@/lib/actions";
 import { getIconComponent } from "./Sidebar";
 
@@ -136,13 +148,6 @@ function AdminPanel({
   initialButtons: Button[];
   onRefresh: () => void;
 }) {
-  // Auth state
-  const [email, setEmail] = useState("");
-  const [nim, setNim] = useState("");
-  const [verified, setVerified] = useState(false);
-  const [authError, setAuthError] = useState("");
-  const [userInfo, setUserInfo] = useState<{ name: string; role_name: string } | null>(null);
-
   // Button list state
   const [allButtons, setAllButtons] = useState<Button[]>(initialButtons);
 
@@ -155,9 +160,30 @@ function AdminPanel({
   const [fType, setFType] = useState<"link" | "embed" | "code">("link");
   const [fSource, setFSource] = useState("");
   const [fIcon, setFIcon] = useState("Cube");
+  const [fImageUrl, setFImageUrl] = useState("");
+  const [fCategory, setFCategory] = useState<string>("apps");
+  const [fCustomCategory, setFCustomCategory] = useState<string>("");
+  const [fAllowedRoles, setFAllowedRoles] = useState<string[]>(["all"]);
 
   // Tab switcher state
-  const [activeTab, setActiveTab] = useState<"apps" | "home">("apps");
+  const [activeTab, setActiveTab] = useState<"apps" | "home" | "users" | "superadmin">("apps");
+
+  // Superadmin unlock state for sensitive tabs
+  const [isSuperadminUnlocked, setIsSuperadminUnlocked] = useState(false);
+  const [superPasscode, setSuperPasscode] = useState("");
+  const [superAuthError, setSuperAuthError] = useState("");
+
+  const handleSuperadminUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSuperAuthError("");
+    const res = await verifyPasscode(superPasscode);
+    if (res.success) {
+      setIsSuperadminUnlocked(true);
+      setActiveTab("users");
+    } else {
+      setSuperAuthError(res.error || "Invalid Superadmin Passcode.");
+    }
+  };
 
   // Home page content state
   const [homeContentType, setHomeContentType] = useState<"html" | "embed">("html");
@@ -167,24 +193,19 @@ function AdminPanel({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    async function checkAuth() {
-      const ok = await isSessionValid();
-      if (ok) {
-        setVerified(true);
-        // Force reload buttons
-        const fresh = await getButtons();
-        setAllButtons(fresh);
-        onRefresh();
-        // Load home page settings
-        const [type, value] = await Promise.all([
-          getSetting("home_content_type"),
-          getSetting("home_content_value"),
-        ]);
-        setHomeContentType((type as "html" | "embed") || "html");
-        setHomeContentValue(value || "");
-      }
+    async function loadData() {
+      const fresh = await getButtons();
+      setAllButtons(fresh);
+      onRefresh();
+      // Load home page settings
+      const [type, value] = await Promise.all([
+        getSetting("home_content_type"),
+        getSetting("home_content_value"),
+      ]);
+      setHomeContentType((type as "html" | "embed") || "html");
+      setHomeContentValue(value || "");
     }
-    checkAuth();
+    loadData();
   }, []);
 
   const loadHomeSettings = async () => {
@@ -195,8 +216,8 @@ function AdminPanel({
       ]);
       setHomeContentType((type as "html" | "embed") || "html");
       setHomeContentValue(value || "");
-    } catch (err) {
-      console.error("Failed to load home page settings", err);
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -230,23 +251,14 @@ function AdminPanel({
     onRefresh();
   };
 
-  // Login
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError("");
-    const res = await verifyUserCredentials(email, nim);
-    if (res.success) {
-      setVerified(true);
-      if (res.user) {
-        setUserInfo({ name: res.user.name, role_name: res.user.role_name });
-      }
-      await reload();
-      await loadHomeSettings();
-    } else {
-      setAuthError(res.error || "Invalid Email or NIM.");
-    }
-  };
 
+  const existingCustomCats = Array.from(
+    new Set(
+      allButtons
+        .map((b) => (b.category || "apps").trim())
+        .filter((c) => !["apps", "tools", "resources"].includes(c.toLowerCase()))
+    )
+  );
 
   // Open modal
   const openModal = (btn: Button | null) => {
@@ -256,12 +268,27 @@ function AdminPanel({
       setFType(btn.source_type);
       setFSource(btn.source);
       setFIcon(btn.icon);
+      setFImageUrl(btn.image_url || "");
+      const cat = (btn.category || "apps").trim();
+      if (["apps", "tools", "resources"].includes(cat.toLowerCase())) {
+        setFCategory(cat.toLowerCase());
+        setFCustomCategory("");
+      } else {
+        setFCategory(cat);
+        setFCustomCategory(cat);
+      }
+      const rawRoles = btn.allowed_roles ? btn.allowed_roles.split(",").map((r) => r.trim()) : ["all"];
+      setFAllowedRoles(rawRoles.length > 0 ? rawRoles : ["all"]);
     } else {
       setEditingBtn(null);
       setFName("");
       setFType("link");
       setFSource("");
       setFIcon("Cube");
+      setFImageUrl("");
+      setFCategory("apps");
+      setFCustomCategory("");
+      setFAllowedRoles(["all"]);
     }
     setIsModalOpen(true);
   };
@@ -272,15 +299,25 @@ function AdminPanel({
     if (!fName.trim() || !fSource.trim()) return;
 
     setIsSaving(true);
+    const finalCategory = fCategory === "custom"
+      ? (fCustomCategory.trim() || "custom")
+      : fCategory;
+    const finalRoles = fAllowedRoles.includes("all") || fAllowedRoles.length === 0
+      ? "all"
+      : fAllowedRoles.join(",");
+
     const data = {
       button_name: fName.trim(),
       source_type: fType,
       source: fSource.trim(),
       icon: fIcon,
+      image_url: fImageUrl.trim() || undefined,
+      category: finalCategory,
+      allowed_roles: finalRoles,
     };
 
     try {
-      const res = editingBtn?.id
+      const res = editingBtn && editingBtn.id
         ? await updateButton("", editingBtn.id, data)
         : await addButton("", data);
 
@@ -288,31 +325,35 @@ function AdminPanel({
         setIsModalOpen(false);
         await reload();
       } else {
-        alert(res.error || "Failed to save.");
+        alert(res.error || "Failed to save button.");
       }
     } catch (err: any) {
-      alert(err.message || "Failed to save.");
+      alert(err.message || "Failed to save button.");
     } finally {
       setIsSaving(false);
     }
   };
 
   // Delete
-  const handleDelete = async (id: number) => {
-    if (!confirm("Delete this button?")) return;
+  const handleDelete = async (id: number, name: string) => {
+    if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+
     setIsSaving(true);
     try {
       const res = await deleteButton("", id);
-      if (res.success) await reload();
-      else alert(res.error);
+      if (res.success) {
+        await reload();
+      } else {
+        alert(res.error || "Failed to delete button.");
+      }
     } catch (err: any) {
-      alert(err.message || "Failed to delete.");
+      alert(err.message || "Failed to delete button.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Reorder
+  // Reorder (drag fallback: up / down buttons)
   const handleMove = async (index: number, dir: "up" | "down") => {
     const arr = [...allButtons];
     const swapIdx = dir === "up" ? index - 1 : index + 1;
@@ -333,62 +374,6 @@ function AdminPanel({
     }
   };
 
-  // ── Login gate ─────────────────────────────────────────────
-  if (!verified) {
-    return (
-      <div className="passcode-container">
-        <form className="passcode-card" onSubmit={handleLogin} autoComplete="off">
-          <div className="passcode-icon">
-            <LockKey size={28} weight="bold" />
-          </div>
-          <h2 className="card-title">System Settings Access</h2>
-          <p className="banner-welcome" style={{ color: "var(--text-secondary)", fontSize: "13px" }}>
-            Enter your Email and NIM to verify your admin privileges.
-          </p>
-
-          <div className="form-group" style={{ marginBottom: 12 }}>
-            <label className="form-label" htmlFor="admin-email">
-              Email Address
-            </label>
-            <input
-              id="admin-email"
-              type="email"
-              className="form-input"
-              placeholder="user@domain.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="off"
-              autoFocus
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label" htmlFor="admin-nim">
-              NIM
-            </label>
-            <input
-              id="admin-nim"
-              type="text"
-              className="form-input"
-              placeholder="Enter NIM"
-              value={nim}
-              onChange={(e) => setNim(e.target.value)}
-              autoComplete="off"
-              required
-            />
-          </div>
-
-          {authError && <div className="error-message" style={{ marginTop: 12 }}>{authError}</div>}
-
-          <button type="submit" className="btn-primary" style={{ width: "100%", marginTop: 16 }}>
-            Authenticate & Access
-          </button>
-        </form>
-      </div>
-    );
-  }
-
   // ── Admin panel ────────────────────────────────────────────
   return (
     <div className="settings-wrapper">
@@ -398,29 +383,10 @@ function AdminPanel({
           <div>
             <h1 className="config-title">GAT App Admin</h1>
             <p className="config-subtitle">
-              Configure GAT App application buttons and home page content.
-              {userInfo && (
-                <span style={{ display: "block", color: "var(--primary-color)", fontWeight: 600, marginTop: 4 }}>
-                  Logged in as: {userInfo.name} ({userInfo.role_name})
-                </span>
-              )}
+              Configure GAT App application buttons, home page content, and user access.
             </p>
           </div>
           <div style={{ display: "flex", gap: 12 }}>
-            <button
-              className="btn-secondary"
-              onClick={async () => {
-                await logout();
-                setVerified(false);
-                setEmail("");
-                setNim("");
-                setUserInfo(null);
-              }}
-            >
-              <LockKey size={14} weight="bold" />
-              &nbsp;Lock
-            </button>
-
             {activeTab === "apps" && (
               <button className="btn-primary" onClick={() => openModal(null)}>
                 <Plus size={14} weight="bold" />
@@ -448,9 +414,28 @@ function AdminPanel({
             <House size={16} weight="bold" />
             Home Page Content
           </button>
+          {!isSuperadminUnlocked ? (
+            <button
+              type="button"
+              className={`settings-tab-btn ${activeTab === "superadmin" ? "active" : ""}`}
+              onClick={() => setActiveTab("superadmin")}
+            >
+              <Shield size={16} weight="bold" />
+              Superadmin
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={`settings-tab-btn ${activeTab === "users" ? "active" : ""}`}
+              onClick={() => setActiveTab("users")}
+            >
+              <User size={16} weight="bold" />
+              Users & Roles (Superadmin)
+            </button>
+          )}
         </div>
 
-        {activeTab === "apps" ? (
+        {activeTab === "apps" && (
           /* Button list */
           <div className="config-list">
             {allButtons.map((btn, idx) => {
@@ -477,9 +462,20 @@ function AdminPanel({
                     </button>
                   </div>
 
-                  {/* Icon */}
-                  <div className="config-item-icon" style={{ background: "transparent", color: "var(--text-secondary)", width: "auto", height: "auto" }}>
-                    {getIconComponent(btn.icon, 20)}
+                  {/* Icon / Image */}
+                  <div className="config-item-icon" style={{ background: "transparent", color: "var(--text-secondary)", width: "auto", height: "auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {btn.image_url ? (
+                      <img
+                        src={btn.image_url}
+                        alt={btn.button_name}
+                        style={{ width: 24, height: 24, objectFit: "contain", borderRadius: 4 }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      getIconComponent(btn.icon, 20)
+                    )}
                   </div>
 
                   {/* Details */}
@@ -491,6 +487,12 @@ function AdminPanel({
                         style={{ color: sc.color, background: sc.bg }}
                       >
                         {btn.source_type}
+                      </span>
+                      <span
+                        className="badge-source-type"
+                        style={{ color: "#f26522", background: "rgba(242, 101, 34, 0.1)", textTransform: "capitalize" }}
+                      >
+                        {btn.category || "apps"}
                       </span>
                     </div>
                     <div className="config-item-url">
@@ -511,7 +513,7 @@ function AdminPanel({
                     </button>
                     <button
                       className="btn-icon delete"
-                      onClick={() => handleDelete(btn.id)}
+                      onClick={() => handleDelete(btn.id, btn.button_name)}
                       title="Delete"
                     >
                       <Trash size={16} weight="bold" />
@@ -541,7 +543,9 @@ function AdminPanel({
               </div>
             )}
           </div>
-        ) : (
+        )}
+
+        {activeTab === "home" && (
           /* Home page settings panel */
           <div className="home-settings-panel">
             <p className="config-subtitle" style={{ marginBottom: "20px" }}>
@@ -639,6 +643,48 @@ function AdminPanel({
             </div>
           </div>
         )}
+
+        {(activeTab === "superadmin" || activeTab === "users") && (
+          <>
+            {!isSuperadminUnlocked ? (
+              <div className="passcode-card" style={{ maxWidth: 440, margin: "32px auto" }}>
+                <div className="passcode-icon">
+                  <Shield size={28} weight="bold" />
+                </div>
+                <h3 className="card-title" style={{ fontSize: 18, fontWeight: 700, textAlign: "center", marginBottom: 20 }}>
+                  Superadmin Passcode Required
+                </h3>
+                <form onSubmit={handleSuperadminUnlock}>
+                  <div className="form-group" style={{ marginBottom: 16 }}>
+                    <label className="form-label" htmlFor="superadmin-passcode-input">
+                      Superadmin Passcode
+                    </label>
+                    <input
+                      id="superadmin-passcode-input"
+                      type="password"
+                      className="form-input"
+                      placeholder="Enter Passcode"
+                      value={superPasscode}
+                      onChange={(e) => setSuperPasscode(e.target.value)}
+                      autoFocus
+                      required
+                    />
+                  </div>
+                  {superAuthError && (
+                    <div className="error-message" style={{ marginBottom: 14 }}>
+                      {superAuthError}
+                    </div>
+                  )}
+                  <button type="submit" className="btn-primary" style={{ width: "100%" }}>
+                    Unlock Superadmin Features
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <UserManagementTab />
+            )}
+          </>
+        )}
       </div>
 
       {/* ── Edit / Add Modal ── */}
@@ -693,6 +739,56 @@ function AdminPanel({
                 </select>
               </div>
 
+              {/* Category */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="modal-category">
+                  Category
+                </label>
+                <select
+                  id="modal-category"
+                  className="form-select"
+                  value={fCategory}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFCategory(val);
+                    if (val !== "custom" && !["apps", "tools", "resources"].includes(val.toLowerCase())) {
+                      setFCustomCategory(val);
+                    }
+                  }}
+                >
+                  <option value="apps">Apps</option>
+                  <option value="tools">Tools</option>
+                  <option value="resources">Resources</option>
+                  {existingCustomCats.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat} (Custom)
+                    </option>
+                  ))}
+                  <option value="custom">+ Add New Custom Category...</option>
+                </select>
+              </div>
+
+              {/* Custom Category Input */}
+              {fCategory === "custom" && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="modal-custom-category">
+                    Custom Category Label / Name
+                  </label>
+                  <input
+                    id="modal-custom-category"
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. Sales & Marketing, DevOps, HR, Security"
+                    value={fCustomCategory}
+                    onChange={(e) => setFCustomCategory(e.target.value)}
+                    required
+                  />
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                    This label will appear as its own tab on the homepage portal.
+                  </p>
+                </div>
+              )}
+
               {/* Source value */}
               <div className="form-group">
                 <label className="form-label" htmlFor="modal-source-val">
@@ -746,6 +842,114 @@ function AdminPanel({
                   ))}
                 </div>
               </div>
+
+              {/* Image URL (Optional) */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="modal-image-url">
+                  App Image URL (Optional for Portal View)
+                </label>
+                <input
+                  id="modal-image-url"
+                  type="url"
+                  className="form-input"
+                  placeholder="https://example.com/app-logo.png or SVG URL"
+                  value={fImageUrl}
+                  onChange={(e) => setFImageUrl(e.target.value)}
+                />
+                {fImageUrl.trim() && (
+                  <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Image Preview:</span>
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 8,
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border-color)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        padding: 4,
+                      }}
+                    >
+                      <img
+                        src={fImageUrl}
+                        alt="App Logo Preview"
+                        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                  If specified, this logo/image will be displayed in the Home page Portal Apps grid instead of the default icon.
+                </p>
+              </div>
+
+              {/* Role Access Permissions */}
+              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                <label className="form-label" style={{ marginBottom: 8, display: "block" }}>
+                  Role Access Permissions
+                </label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  {[
+                    { id: "all", label: "All Roles / Public" },
+                    { id: "administrator", label: "Administrator" },
+                    { id: "intern", label: "Intern" },
+                    { id: "student", label: "Student" },
+                    { id: "lecturer", label: "Lecturer" },
+                  ].map((roleItem) => {
+                    const isChecked =
+                      roleItem.id === "all"
+                        ? fAllowedRoles.includes("all")
+                        : !fAllowedRoles.includes("all") && fAllowedRoles.includes(roleItem.id);
+
+                    return (
+                      <label
+                        key={roleItem.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: 13,
+                          fontWeight: 500,
+                          color: "var(--text-primary)",
+                          background: isChecked ? "var(--primary-light, #EEF2FF)" : "var(--bg-secondary)",
+                          padding: "6px 12px",
+                          borderRadius: 8,
+                          border: `1px solid ${isChecked ? "var(--primary-color, #4F46E5)" : "var(--border-color)"}`,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (roleItem.id === "all") {
+                              setFAllowedRoles(["all"]);
+                            } else {
+                              let next = fAllowedRoles.filter((r) => r !== "all");
+                              if (e.target.checked) {
+                                next.push(roleItem.id);
+                              } else {
+                                next = next.filter((r) => r !== roleItem.id);
+                              }
+                              if (next.length === 0) {
+                                next = ["all"];
+                              }
+                              setFAllowedRoles(next);
+                            }
+                          }}
+                        />
+                        {roleItem.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             <div className="modal-actions">
@@ -770,6 +974,458 @@ function AdminPanel({
             <div className="spinner" />
             <p className="saving-text">Saving changes...</p>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// User & Role Management Component (Central Auth DB)
+// ─────────────────────────────────────────────────────────────
+function UserManagementTab() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Modal State
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+
+  // Form Fields
+  const [uName, setUName] = useState("");
+  const [uEmail, setUEmail] = useState("");
+  const [uNim, setUNim] = useState("");
+  const [uRoleIds, setURoleIds] = useState<number[]>([2]);
+  const [saving, setSaving] = useState(false);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [uRes, rRes] = await Promise.all([getUsers(), getRoles()]);
+      setUsers(uRes);
+      setRoles(rRes);
+      if (rRes.length > 0 && (!uRoleIds || uRoleIds.length === 0)) {
+        setURoleIds([rRes[0].id]);
+      }
+    } catch (err) {
+      console.error("Failed to load user management data", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const openUserModal = (user: any | null) => {
+    if (user) {
+      setEditingUser(user);
+      setUName(user.name);
+      setUEmail(user.email);
+      setUNim(user.nim || "");
+      setURoleIds(user.role_ids && user.role_ids.length > 0 ? user.role_ids : [user.role_id || 2]);
+    } else {
+      setEditingUser(null);
+      setUName("");
+      setUEmail("");
+      setUNim("");
+      setURoleIds([2]);
+    }
+    setIsUserModalOpen(true);
+  };
+
+  const handleSaveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uName.trim() || !uEmail.trim()) return;
+
+    setSaving(true);
+    try {
+      const data = {
+        name: uName.trim(),
+        email: uEmail.trim(),
+        nim: uNim.trim(),
+        role_ids: uRoleIds.length > 0 ? uRoleIds : [2],
+      };
+
+      const res = editingUser
+        ? await updateUser(editingUser.id, data)
+        : await createUser(data);
+
+      if (res.success) {
+        setIsUserModalOpen(false);
+        await loadData();
+      } else {
+        alert(res.error || "Failed to save user.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to save user.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteUser = async (id: number, name: string) => {
+    if (!confirm(`Are you sure you want to delete user "${name}"?`)) return;
+    try {
+      const res = await deleteUser(id);
+      if (res.success) {
+        await loadData();
+      } else {
+        alert(res.error || "Failed to delete user.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete user.");
+    }
+  };
+
+  const renderRoleBadge = (roleName: string) => {
+    const key = roleName?.toLowerCase() || "student";
+    switch (key) {
+      case "admin":
+      case "superadmin":
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600, color: "#4F46E5", background: "#EEF2FF" }}>
+            <Shield size={12} weight="bold" /> {roleName}
+          </span>
+        );
+      case "lecturer":
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600, color: "#059669", background: "#ECFDF5" }}>
+            <ChalkboardTeacher size={12} weight="bold" /> {roleName}
+          </span>
+        );
+      case "intern":
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600, color: "#D97706", background: "#FFFBEB" }}>
+            <Lightning size={12} weight="bold" /> {roleName}
+          </span>
+        );
+      default:
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600, color: "#64748B", background: "#F1F5F9" }}>
+            <GraduationCap size={12} weight="bold" /> {roleName}
+          </span>
+        );
+    }
+  };
+
+  const filteredUsers = users.filter((u) =>
+    u.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+  );
+
+  // Superadmin Passcode Management state
+  const [currPass, setCurrPass] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [confirmPass, setConfirmPass] = useState("");
+  const [passMsg, setPassMsg] = useState({ text: "", isError: false });
+  const [updatingPass, setUpdatingPass] = useState(false);
+
+  const handleUpdatePasscode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassMsg({ text: "", isError: false });
+
+    if (newPass !== confirmPass) {
+      setPassMsg({ text: "New passcodes do not match.", isError: true });
+      return;
+    }
+
+    setUpdatingPass(true);
+    try {
+      const res = await updateSuperadminPasscode(currPass, newPass);
+      if (res.success) {
+        setPassMsg({ text: "Superadmin passcode successfully updated!", isError: false });
+        setCurrPass("");
+        setNewPass("");
+        setConfirmPass("");
+      } else {
+        setPassMsg({ text: res.error || "Failed to update passcode.", isError: true });
+      }
+    } catch (err: any) {
+      setPassMsg({ text: err.message || "Failed to update passcode.", isError: true });
+    } finally {
+      setUpdatingPass(false);
+    }
+  };
+
+  return (
+    <div className="user-management-panel" style={{ marginTop: 8 }}>
+      {/* ── Security & Passcode Management Card ── */}
+      <div className="home-content-card" style={{ marginBottom: 28, background: "var(--bg-card)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <Shield size={20} weight="bold" color="var(--primary-color)" />
+          <h4 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+            Security & Passcode Management
+          </h4>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
+          Update the Superadmin Security Key used to unlock sensitive platform controls and Central Auth accounts.
+        </p>
+
+        <form onSubmit={handleUpdatePasscode}>
+          <div className="form-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <div className="form-group">
+              <label className="form-label">Current Passcode</label>
+              <input
+                type="password"
+                className="form-input"
+                placeholder="Current Passcode"
+                value={currPass}
+                onChange={(e) => setCurrPass(e.target.value)}
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">New Passcode</label>
+              <input
+                type="password"
+                className="form-input"
+                placeholder="New Passcode (min 4 chars)"
+                value={newPass}
+                onChange={(e) => setNewPass(e.target.value)}
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Confirm New Passcode</label>
+              <input
+                type="password"
+                className="form-input"
+                placeholder="Confirm New Passcode"
+                value={confirmPass}
+                onChange={(e) => setConfirmPass(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          {passMsg.text && (
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: 13,
+                fontWeight: 600,
+                color: passMsg.isError ? "var(--danger, #EF4444)" : "var(--success, #10B981)",
+              }}
+            >
+              {passMsg.isError ? "✗ " : "✓ "}{passMsg.text}
+            </div>
+          )}
+
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+            <button type="submit" className="btn-primary" disabled={updatingPass}>
+              {updatingPass ? "Updating Passcode..." : "Update Passcode"}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+            Central Auth User Accounts
+          </h3>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "4px 0 0" }}>
+            Manage users, assign multiple roles, and configure system permissions in central-auth-binusgat.
+          </p>
+        </div>
+        <button className="btn-primary" onClick={() => openUserModal(null)}>
+          <Plus size={14} weight="bold" />
+          &nbsp;Add User
+        </button>
+      </div>
+
+      {/* Name Search Bar */}
+      <div style={{ position: "relative", marginBottom: 16 }}>
+        <MagnifyingGlass
+          size={16}
+          weight="bold"
+          style={{
+            position: "absolute",
+            left: 12,
+            top: "50%",
+            transform: "translateY(-50%)",
+            color: "var(--text-secondary)",
+          }}
+        />
+        <input
+          type="text"
+          className="form-input"
+          placeholder="Search by name..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{ paddingLeft: 36, width: "100%" }}
+        />
+      </div>
+
+      {loading ? (
+        <div style={{ padding: "32px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
+          Loading user accounts...
+        </div>
+      ) : (
+        <div className="config-list">
+          {filteredUsers.map((u) => {
+            const roleList = u.role_names && u.role_names.length > 0 ? u.role_names : [u.role_name || "student"];
+            return (
+              <div key={u.id} className="config-item" style={{ gap: 16 }}>
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: "50%",
+                    background: "var(--primary-light, #EEF2FF)",
+                    color: "var(--primary-color, #4F46E5)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontWeight: 700,
+                    fontSize: 15,
+                  }}
+                >
+                  {u.name.charAt(0).toUpperCase()}
+                </div>
+
+                <div className="config-item-details">
+                  <div className="config-item-name" style={{ gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    {u.name}
+                    {roleList.map((rn: string, rIdx: number) => (
+                      <React.Fragment key={rIdx}>
+                        {renderRoleBadge(rn)}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <div className="config-item-url" style={{ fontSize: 12 }}>
+                    {u.email} {u.nim ? `• NIM: ${u.nim}` : ""}
+                  </div>
+                </div>
+
+                <div className="config-item-actions">
+                  <button className="btn-icon" onClick={() => openUserModal(u)} title="Edit User">
+                    <PencilSimple size={16} weight="bold" />
+                  </button>
+                  <button className="btn-icon delete" onClick={() => handleDeleteUser(u.id, u.name)} title="Delete User">
+                    <Trash size={16} weight="bold" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {filteredUsers.length === 0 && (
+            <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", fontSize: 14 }}>
+              {searchQuery ? `No user found matching "${searchQuery}".` : "No users found in Central Auth database."}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Add / Edit User Modal ── */}
+      {isUserModalOpen && (
+        <div className="modal-overlay">
+          <form className="modal-card" onSubmit={handleSaveUser}>
+            <h3 className="modal-header">
+              {editingUser ? `Edit User: ${editingUser.name}` : "Create New User Account"}
+            </h3>
+
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label" htmlFor="user-name">Full Name</label>
+                <input
+                  id="user-name"
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Kelvin"
+                  value={uName}
+                  onChange={(e) => setUName(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="user-email">Email Address</label>
+                <input
+                  id="user-email"
+                  type="email"
+                  className="form-input"
+                  placeholder="kelvin@binus.ac.id"
+                  value={uEmail}
+                  onChange={(e) => setUEmail(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="user-nim">NIM</label>
+                <input
+                  id="user-nim"
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. 2602123456"
+                  value={uNim}
+                  onChange={(e) => setUNim(e.target.value)}
+                />
+              </div>
+
+              {/* Multi-Role Checkboxes */}
+              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                <label className="form-label">Assigned Roles (Multi-Role Support)</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10, marginTop: 6 }}>
+                  {roles.map((r) => {
+                    const isChecked = uRoleIds.includes(r.id);
+                    return (
+                      <label
+                        key={r.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: `1px solid ${isChecked ? "var(--primary-color, #4F46E5)" : "var(--border-color)"}`,
+                          background: isChecked ? "var(--primary-light, rgba(79, 70, 229, 0.1))" : "transparent",
+                          cursor: "pointer",
+                          fontSize: 13,
+                          fontWeight: isChecked ? 600 : 400,
+                          color: "var(--text-primary)",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setURoleIds([...uRoleIds, r.id]);
+                            } else {
+                              setURoleIds(uRoleIds.filter((id) => id !== r.id));
+                            }
+                          }}
+                        />
+                        <span>{r.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+                  You can assign multiple roles to a single user account simultaneously.
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setIsUserModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary" disabled={saving}>
+                {saving ? "Saving…" : "Save User"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
