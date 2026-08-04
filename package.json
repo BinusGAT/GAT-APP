@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "generate-passcode-hash": "node scripts/generate-passcode-hash.mjs",
-    "test:security": "node --experimental-strip-types --test tests/security.test.mjs"
+    "test:security": "node --experimental-strip-types --test tests/security.test.mjs tests/permissions.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

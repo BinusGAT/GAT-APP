@@ -1,10 +1,20 @@
 export const PUBLIC_ROLE = "all";
 export const ADMINISTRATOR_ROLE = "administrator";
 
+export const ROLE_OPTIONS = [
+  { id: PUBLIC_ROLE, label: "All Roles / Public" },
+  { id: ADMINISTRATOR_ROLE, label: "Administrator" },
+  { id: "intern", label: "Intern" },
+  { id: "student", label: "Student" },
+  { id: "lecturer", label: "Lecturer" },
+] as const;
+
 const ADMINISTRATOR_ALIASES = new Set(["admin", "administrator", "superadmin"]);
 
 export type PermissionActor = {
   activeRole?: string | null;
+  kind?: "user" | "superadmin";
+  superadminUntil?: number;
 } | null;
 
 export type RoleRestrictedResource = {
@@ -54,8 +64,13 @@ export function canManageButtons(actor: PermissionActor): boolean {
   return isAdministratorRole(actor?.activeRole);
 }
 
-export function canManageUsers(actor: PermissionActor, hasSuperadminElevation: boolean): boolean {
-  return canManageButtons(actor) && hasSuperadminElevation;
+export function isSuperadminElevated(actor: PermissionActor, now = Date.now()): boolean {
+  return !!actor && (actor.kind === "superadmin" ||
+    (typeof actor.superadminUntil === "number" && actor.superadminUntil > now));
+}
+
+export function canManageUsers(actor: PermissionActor, now = Date.now()): boolean {
+  return canManageButtons(actor) && isSuperadminElevated(actor, now);
 }
 
 export function canSwitchToRole(assignedRoles: string[], requestedRole: string): boolean {

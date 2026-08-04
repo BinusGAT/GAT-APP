@@ -43,6 +43,7 @@ import {
 import type { IconProps } from "@phosphor-icons/react";
 import type { ComponentType } from "react";
 import { Button } from "@/lib/db";
+import { formatRoleName } from "@/lib/permissions";
 
 // ── Icon helper (exported so Home.tsx can reuse it) ───────────
 const ICON_MAP: Record<string, ComponentType<IconProps>> = {
@@ -72,16 +73,6 @@ const GRADIENTS = [
   "gradient-1","gradient-2","gradient-3","gradient-4","gradient-5",
   "gradient-6","gradient-7","gradient-8","gradient-9","gradient-10",
 ];
-
-function formatRoleName(roleName: string): string {
-  if (!roleName) return "";
-  const key = roleName.toLowerCase();
-  if (["admin", "administrator", "superadmin"].includes(key)) return "Administrator";
-  if (key === "intern") return "Intern";
-  if (key === "student") return "Student";
-  if (key === "lecturer") return "Lecturer";
-  return roleName.charAt(0).toUpperCase() + roleName.slice(1);
-}
 
 interface SidebarProps {
   buttons: Button[];

@@ -16,11 +16,6 @@ export type SessionPayload = {
   expiresAt: number;
 };
 
-export function isSuperadminElevated(session: SessionPayload, now = Date.now()): boolean {
-  return session.kind === "superadmin" ||
-    (typeof session.superadminUntil === "number" && session.superadminUntil > now);
-}
-
 function getSessionSecret(): string | null {
   const secret = process.env.JWT_SECRET?.trim();
   return secret && secret.length >= 32 ? secret : null;

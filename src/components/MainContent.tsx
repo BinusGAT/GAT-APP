@@ -43,6 +43,7 @@ import {
   deleteUser,
 } from "@/lib/actions";
 import { getIconComponent } from "./Sidebar";
+import { parseAllowedRoles, ROLE_OPTIONS, serializeAllowedRoles } from "@/lib/permissions";
 
 // ── Icon list for the picker ──────────────────────────────────
 const AVAILABLE_ICONS = [
@@ -290,7 +291,7 @@ function AdminPanel({
         setFCategory(cat);
         setFCustomCategory(cat);
       }
-      const rawRoles = btn.allowed_roles ? btn.allowed_roles.split(",").map((r) => r.trim()) : ["all"];
+      const rawRoles = parseAllowedRoles(btn.allowed_roles);
       setFAllowedRoles(rawRoles.length > 0 ? rawRoles : ["all"]);
     } else {
       setEditingBtn(null);
@@ -315,9 +316,7 @@ function AdminPanel({
     const finalCategory = fCategory === "custom"
       ? (fCustomCategory.trim() || "custom")
       : fCategory;
-    const finalRoles = fAllowedRoles.includes("all") || fAllowedRoles.length === 0
-      ? "all"
-      : Array.from(new Set(["administrator", ...fAllowedRoles])).join(",");
+    const finalRoles = serializeAllowedRoles(fAllowedRoles);
 
     const data = {
       button_name: fName.trim(),
@@ -912,13 +911,7 @@ function AdminPanel({
                   Role Access Permissions
                 </label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                  {[
-                    { id: "all", label: "All Roles / Public" },
-                    { id: "administrator", label: "Administrator" },
-                    { id: "intern", label: "Intern" },
-                    { id: "student", label: "Student" },
-                    { id: "lecturer", label: "Lecturer" },
-                  ].map((roleItem) => {
+                  {ROLE_OPTIONS.map((roleItem) => {
                     const isAdministrator = roleItem.id === "administrator";
                     const isChecked =
                       isAdministrator ||

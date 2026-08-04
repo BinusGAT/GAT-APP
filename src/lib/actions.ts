@@ -5,7 +5,6 @@ import { cookies } from "next/headers";
 import {
   createPasscodeHash,
   createSessionToken,
-  isSuperadminElevated,
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
   SUPERADMIN_ELEVATION_SECONDS,
@@ -75,7 +74,7 @@ async function requireAdministrator(): Promise<boolean> {
 
 async function requireSuperadmin(): Promise<boolean> {
   const session = await readSession();
-  return !!session && canManageUsers(session, isSuperadminElevated(session));
+  return canManageUsers(session);
 }
 
 // ── Auth (Email & NIM with Role Validation) ─────────────────────
@@ -225,7 +224,7 @@ export async function getCurrentUser(): Promise<{ name: string; email: string; r
 
 export async function isSuperadminSessionValid(): Promise<boolean> {
   const session = await readSession();
-  return !!session && isSuperadminElevated(session);
+  return canManageUsers(session);
 }
 
 export async function switchActiveRole(role: string): Promise<{ success: boolean; error?: string; activeRole?: string }> {

@@ -7,10 +7,10 @@ process.env.JWT_SECRET = "test-only-secret-that-is-at-least-32-characters-long";
 const {
   createPasscodeHash,
   createSessionToken,
-  isSuperadminElevated,
   verifyPasscodeHash,
   verifySessionToken,
 } = await import("../src/lib/security.ts");
+const { isSuperadminElevated } = await import("../src/lib/permissions.ts");
 
 function session(overrides = {}) {
   const now = Date.now();

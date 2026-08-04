@@ -7,6 +7,7 @@ import Home from "@/components/Home";
 import MainContent from "@/components/MainContent";
 import { Button } from "@/lib/db";
 import { getButtons, getCurrentUser, verifyUserCredentials, logout, switchActiveRole } from "@/lib/actions";
+import { formatRoleName, isAdministratorRole } from "@/lib/permissions";
 import {
   DotsNine,
   ArrowLeft,
@@ -20,16 +21,6 @@ import {
   X,
   Smiley,
 } from "@phosphor-icons/react";
-
-export function formatRoleName(roleName: string): string {
-  if (!roleName) return "";
-  const key = roleName.toLowerCase();
-  if (["admin", "administrator", "superadmin"].includes(key)) return "Administrator";
-  if (key === "intern") return "Intern";
-  if (key === "student") return "Student";
-  if (key === "lecturer") return "Lecturer";
-  return roleName.charAt(0).toUpperCase() + roleName.slice(1);
-}
 
 // Helper to generate URL-friendly slug
 export function slugify(text: string): string {
@@ -105,9 +96,7 @@ export default function GatAppPage({ params }: PageProps) {
   const isAdmin = !!(
     currentUser &&
     currentUser.activeRole &&
-    ["admin", "administrator", "superadmin"].includes(
-      currentUser.activeRole.toLowerCase()
-    )
+    isAdministratorRole(currentUser.activeRole)
   );
 
   // Redirect / to /home
@@ -174,9 +163,7 @@ export default function GatAppPage({ params }: PageProps) {
         const rawRoles: string[] = res.user.roles || res.user.role_name.split(",").map((r: string) => r.trim());
         const userRoles: string[] = Array.from(new Set(rawRoles.filter(Boolean)));
 
-        const hasAdminRole = userRoles.some((r: string) =>
-          ["admin", "administrator", "superadmin"].includes(r.toLowerCase())
-        );
+        const hasAdminRole = userRoles.some(isAdministratorRole);
         const defaultRole = hasAdminRole
           ? "Administrator"
           : userRoles[0] || "User";
@@ -218,9 +205,7 @@ export default function GatAppPage({ params }: PageProps) {
     if (!currentUser) return;
     const result = await switchActiveRole(roleName);
     if (!result.success || !result.activeRole) return;
-    const isNewAdmin = ["admin", "administrator", "superadmin"].includes(
-      result.activeRole.toLowerCase()
-    );
+    const isNewAdmin = isAdministratorRole(result.activeRole);
 
     const updatedUser: LoggedInUser = {
       ...currentUser,
@@ -476,7 +461,7 @@ export default function GatAppPage({ params }: PageProps) {
                 let icon = <GraduationCap size={22} weight="bold" color="#64748B" />;
                 let iconBg = "#F1F5F9";
 
-                if (["admin", "administrator", "superadmin"].includes(key)) {
+                if (isAdministratorRole(key)) {
                   title = "Administrator";
                   desc = "Full system control, buttons & platform settings";
                   icon = <Shield size={22} weight="bold" color="#4F46E5" />;
