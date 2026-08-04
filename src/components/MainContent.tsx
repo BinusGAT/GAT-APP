@@ -25,6 +25,7 @@ import { Button } from "@/lib/db";
 import {
   verifyUserCredentials,
   verifyPasscode,
+  isSuperadminSessionValid,
   updateSuperadminPasscode,
   getButtons,
   addButton,
@@ -56,6 +57,10 @@ const GRADIENTS = [
   "gradient-1","gradient-2","gradient-3","gradient-4","gradient-5",
   "gradient-6","gradient-7","gradient-8","gradient-9","gradient-10",
 ];
+
+// Keep the passcode-management implementation available for future use while
+// hiding it from the Superadmin interface for now.
+const SHOW_PASSCODE_MANAGEMENT = false;
 
 // ── Source type badge colors ──────────────────────────────────
 const SOURCE_COLORS: Record<string, { color: string; bg: string }> = {
@@ -170,8 +175,16 @@ function AdminPanel({
 
   // Superadmin unlock state for sensitive tabs
   const [isSuperadminUnlocked, setIsSuperadminUnlocked] = useState(false);
+  const [isSuperadminStatusLoaded, setIsSuperadminStatusLoaded] = useState(false);
   const [superPasscode, setSuperPasscode] = useState("");
   const [superAuthError, setSuperAuthError] = useState("");
+
+  useEffect(() => {
+    isSuperadminSessionValid()
+      .then(setIsSuperadminUnlocked)
+      .catch(() => setIsSuperadminUnlocked(false))
+      .finally(() => setIsSuperadminStatusLoaded(true));
+  }, []);
 
   const handleSuperadminUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -646,7 +659,11 @@ function AdminPanel({
 
         {(activeTab === "superadmin" || activeTab === "users") && (
           <>
-            {!isSuperadminUnlocked ? (
+            {!isSuperadminStatusLoaded ? (
+              <div className="iframe-loading" style={{ minHeight: 220 }}>
+                <div className="spinner" />
+              </div>
+            ) : !isSuperadminUnlocked ? (
               <div className="passcode-card" style={{ maxWidth: 440, margin: "32px auto" }}>
                 <div className="passcode-icon">
                   <Shield size={28} weight="bold" />
@@ -1158,6 +1175,7 @@ function UserManagementTab() {
   return (
     <div className="user-management-panel" style={{ marginTop: 8 }}>
       {/* ── Security & Passcode Management Card ── */}
+      {SHOW_PASSCODE_MANAGEMENT && (
       <div className="home-content-card" style={{ marginBottom: 28, background: "var(--bg-card)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
           <Shield size={20} weight="bold" color="var(--primary-color)" />
@@ -1187,9 +1205,10 @@ function UserManagementTab() {
               <input
                 type="password"
                 className="form-input"
-                placeholder="New Passcode (min 4 chars)"
+                placeholder="New Passcode (min 5 chars)"
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
+                minLength={5}
                 required
               />
             </div>
@@ -1226,6 +1245,7 @@ function UserManagementTab() {
           </div>
         </form>
       </div>
+      )}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div>

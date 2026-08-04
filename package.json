@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "generate-passcode-hash": "node scripts/generate-passcode-hash.mjs",
+    "test:security": "node --experimental-strip-types --test tests/security.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

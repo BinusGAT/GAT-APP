@@ -6,7 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Home from "@/components/Home";
 import MainContent from "@/components/MainContent";
 import { Button } from "@/lib/db";
-import { getButtons, verifyUserCredentials, logout } from "@/lib/actions";
+import { getButtons, getCurrentUser, verifyUserCredentials, logout, switchActiveRole } from "@/lib/actions";
 import {
   DotsNine,
   ArrowLeft,
@@ -74,21 +74,12 @@ export default function GatAppPage({ params }: PageProps) {
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // Load saved session on mount
+  // Restore identity only from the authenticated server session.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("gat_user_session");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.email && parsed.roles && parsed.roles.length > 0) {
-          setCurrentUser(parsed);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to restore auth session:", e);
-    } finally {
-      setSessionLoaded(true);
-    }
+    getCurrentUser()
+      .then(setCurrentUser)
+      .catch((e) => console.error("Failed to restore auth session:", e))
+      .finally(() => setSessionLoaded(true));
   }, []);
 
   const fetchButtons = useCallback(async () => {
@@ -198,7 +189,7 @@ export default function GatAppPage({ params }: PageProps) {
         };
 
         setCurrentUser(userObj);
-        localStorage.setItem("gat_user_session", JSON.stringify(userObj));
+        await fetchButtons();
         setIsLoginModalOpen(false);
         setLoginEmail("");
         setLoginNim("");
@@ -216,27 +207,29 @@ export default function GatAppPage({ params }: PageProps) {
   const handleUserLogout = async () => {
     await logout();
     setCurrentUser(null);
-    localStorage.removeItem("gat_user_session");
+    await fetchButtons();
     if (currentSlug === "settings") {
       router.push("/home");
     }
   };
 
   // Switch Active Role handler
-  const handleSelectActiveRole = (roleName: string) => {
+  const handleSelectActiveRole = async (roleName: string) => {
     if (!currentUser) return;
+    const result = await switchActiveRole(roleName);
+    if (!result.success || !result.activeRole) return;
     const isNewAdmin = ["admin", "administrator", "superadmin"].includes(
-      roleName.toLowerCase()
+      result.activeRole.toLowerCase()
     );
 
     const updatedUser: LoggedInUser = {
       ...currentUser,
-      activeRole: isNewAdmin ? "Administrator" : roleName,
+      activeRole: isNewAdmin ? "Administrator" : result.activeRole,
     };
 
     setCurrentUser(updatedUser);
-    localStorage.setItem("gat_user_session", JSON.stringify(updatedUser));
     setIsRoleSwitchModalOpen(false);
+    await fetchButtons();
 
     if (!isNewAdmin && currentSlug === "settings") {
       router.push("/home");
@@ -251,23 +244,9 @@ export default function GatAppPage({ params }: PageProps) {
 
   const activeButtonId = activeView.kind === "content" ? activeView.button.id : null;
 
-  // Filter visible buttons based on user activeRole / public access
-  const visibleButtons = buttons.filter((btn) => {
-    const userRole = currentUser?.activeRole?.toLowerCase();
-
-    // Administrators always have access, regardless of per-button role settings.
-    if (userRole && ["admin", "administrator", "superadmin"].includes(userRole)) {
-      return true;
-    }
-
-    const rawAllowed = (btn.allowed_roles || "all").toLowerCase();
-    if (rawAllowed === "all" || rawAllowed.includes("all")) return true;
-    if (!userRole) return false;
-
-    const allowedList = rawAllowed.split(",").map((r) => r.trim());
-
-    return allowedList.includes(userRole);
-  });
+  // getButtons() already applies role permissions on the server. Re-filtering
+  // here while the user session is still loading makes sidebar items flicker.
+  const visibleButtons = buttons;
 
   return (
     <div className="app-container">
@@ -410,7 +389,7 @@ export default function GatAppPage({ params }: PageProps) {
           <div className="modal-card" style={{ maxWidth: 420, padding: 24, borderRadius: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
-                Sign In to GAT App
+                Sign In
               </h3>
               <button
                 className="btn-icon"
@@ -437,12 +416,12 @@ export default function GatAppPage({ params }: PageProps) {
               </div>
 
               <div className="form-group" style={{ marginBottom: 20 }}>
-                <label className="form-label" htmlFor="header-login-nim">NIM</label>
+                <label className="form-label" htmlFor="header-login-nim">Password</label>
                 <input
                   id="header-login-nim"
                   type="password"
                   className="form-input"
-                  placeholder="Enter NIM"
+                  placeholder="Enter Password"
                   value={loginNim}
                   onChange={(e) => setLoginNim(e.target.value)}
                   required

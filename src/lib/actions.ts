@@ -2,7 +2,26 @@
 
 import { client, authClient, initDb, Button, UserWithRole, Role } from "./db";
 import { cookies } from "next/headers";
-import crypto from "crypto";
+import {
+  createPasscodeHash,
+  createSessionToken,
+  isSuperadminElevated,
+  SESSION_COOKIE,
+  SESSION_MAX_AGE_SECONDS,
+  SUPERADMIN_ELEVATION_SECONDS,
+  SessionPayload,
+  verifyPasscodeHash,
+  verifySessionToken,
+} from "./security";
+import {
+  canAccessResource,
+  canManageButtons,
+  canManageUsers,
+  canSwitchToRole,
+  isAdministratorRole,
+  normalizeRole,
+  normalizeRoles,
+} from "./permissions";
 
 let isInitialized = false;
 async function ensureDb() {
@@ -17,14 +36,46 @@ async function ensureDb() {
 }
 
 // ── Secure Session Helpers ─────────────────────────────────────
-export async function checkSession(): Promise<boolean> {
+async function readSession(): Promise<SessionPayload | null> {
   try {
     const cookieStore = await cookies();
-    const session = cookieStore.get("gat_session")?.value;
-    return !!session;
+    return verifySessionToken(cookieStore.get(SESSION_COOKIE)?.value);
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function setSession(payload: Omit<SessionPayload, "issuedAt" | "expiresAt">): Promise<boolean> {
+  const now = Date.now();
+  const token = createSessionToken({
+    ...payload,
+    issuedAt: now,
+    expiresAt: now + SESSION_MAX_AGE_SECONDS * 1000,
+  });
+  if (!token) return false;
+  const cookieStore = await cookies();
+  cookieStore.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+    sameSite: "strict",
+  });
+  return true;
+}
+
+export async function checkSession(): Promise<boolean> {
+  return (await readSession()) !== null;
+}
+
+async function requireAdministrator(): Promise<boolean> {
+  const session = await readSession();
+  return !!session && canManageButtons(session);
+}
+
+async function requireSuperadmin(): Promise<boolean> {
+  const session = await readSession();
+  return !!session && canManageUsers(session, isSuperadminElevated(session));
 }
 
 // ── Auth (Email & NIM with Role Validation) ─────────────────────
@@ -65,29 +116,27 @@ export async function verifyUserCredentials(
     const userRow = res.rows[0];
     const roleNamesStr = String(userRow.role_names_str || "student");
     const roleNames = roleNamesStr.split(",").map((r) => r.trim());
-    const primaryRole = roleNames[0] || "student";
-    const cookieStore = await cookies();
-    const serverSecret = process.env.JWT_SECRET || "gat-secret-key-129847192";
-    const sessionToken = crypto
-      .createHmac("sha256", serverSecret)
-      .update(`user-${userRow.id}-${userRow.email}-${primaryRole}`)
-      .digest("hex");
-
-    cookieStore.set("gat_session", sessionToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 8, // 8 hours
-      sameSite: "lax",
+    const normalizedRoles = normalizeRoles(roleNames);
+    const primaryRole = normalizedRoles.find(isAdministratorRole) || normalizedRoles[0] || "student";
+    const sessionCreated = await setSession({
+      kind: "user",
+      userId: Number(userRow.id),
+      name: String(userRow.name),
+      email: String(userRow.email),
+      roles: normalizedRoles,
+      activeRole: primaryRole,
     });
+    if (!sessionCreated) {
+      return { success: false, error: "Server session secret is missing or too short." };
+    }
 
     return {
       success: true,
       user: {
         name: String(userRow.name),
         email: String(userRow.email),
-        role_name: roleNames.join(", "),
-        roles: roleNames,
+        role_name: normalizedRoles.join(", "),
+        roles: normalizedRoles,
       },
     };
   } catch (error: any) {
@@ -98,49 +147,37 @@ export async function verifyUserCredentials(
 export async function verifyPasscode(passcode: string): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
   if (!passcode) return { success: false, error: "Passcode is required." };
-
-  // Fetch stored passcode hash from DB settings
-  const dbHash = await getSetting("superadmin_passcode_hash");
-
-  let targetHashBuf: Buffer | null = null;
-
-  if (dbHash && dbHash.trim()) {
-    targetHashBuf = Buffer.from(dbHash.trim(), "hex");
-  } else if (process.env.SUPERADMIN_PASSCODE_HASH) {
-    targetHashBuf = Buffer.from(process.env.SUPERADMIN_PASSCODE_HASH.trim(), "hex");
-  } else {
-    // Fallback to plain text passcode env / default for initial setup
-    const plainCorrect = process.env.SUPERADMIN_PASSCODE || process.env.SETTINGS_PASSCODE || "1234";
-    targetHashBuf = crypto.createHash("sha256").update(plainCorrect).digest();
+  const currentSession = await readSession();
+  if (!currentSession || currentSession.kind !== "user" || !isAdministratorRole(currentSession.activeRole)) {
+    return { success: false, error: "An Administrator user session is required." };
   }
 
-  if (!targetHashBuf || targetHashBuf.length === 0) {
+  // Fetch stored passcode hash from DB settings
+  const hashResult = await client.execute({
+    sql: "SELECT value FROM settings WHERE key = ?",
+    args: ["superadmin_passcode_hash"],
+  });
+  const dbHash = hashResult.rows.length > 0 ? String(hashResult.rows[0].value) : "";
+
+  const storedHash = dbHash?.trim() || process.env.SUPERADMIN_PASSCODE_HASH?.trim();
+  if (!storedHash) {
     console.warn("Superadmin login rejected: No passcode hash configured.");
     return { success: false, error: "Superadmin access disabled. Passcode not configured." };
   }
 
-  const inputHashBuf = crypto.createHash("sha256").update(passcode).digest();
-
-  const isMatch =
-    inputHashBuf.length === targetHashBuf.length &&
-    crypto.timingSafeEqual(inputHashBuf, targetHashBuf);
-
-  if (isMatch) {
-    const cookieStore = await cookies();
-    const serverSecret = process.env.JWT_SECRET || "gat-secret-key-129847192";
-    const sessionToken = crypto
-      .createHmac("sha256", serverSecret)
-      .update(`superadmin-session`)
-      .digest("hex");
-
-    cookieStore.set("gat_session", sessionToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 8, // 8 hours
-      sameSite: "lax",
+  const verification = verifyPasscodeHash(passcode, storedHash);
+  if (verification !== "invalid") {
+    if (verification === "legacy") {
+      await client.execute({
+        sql: "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        args: ["superadmin_passcode_hash", createPasscodeHash(passcode)],
+      });
+    }
+    const sessionCreated = await setSession({
+      ...currentSession,
+      superadminUntil: Date.now() + SUPERADMIN_ELEVATION_SECONDS * 1000,
     });
-
+    if (!sessionCreated) return { success: false, error: "Server session secret is missing or too short." };
     return { success: true };
   }
 
@@ -156,8 +193,8 @@ export async function updateSuperadminPasscode(
     return { success: false, error: "Both current and new passcodes are required." };
   }
 
-  if (newPasscode.length < 4) {
-    return { success: false, error: "New passcode must be at least 4 characters long." };
+  if (newPasscode.length < 5) {
+    return { success: false, error: "New passcode must be at least 5 characters long." };
   }
 
   const verifyRes = await verifyPasscode(currentPasscode);
@@ -165,7 +202,7 @@ export async function updateSuperadminPasscode(
     return { success: false, error: "Current passcode verification failed: " + (verifyRes.error || "Invalid passcode") };
   }
 
-  const newHashHex = crypto.createHash("sha256").update(newPasscode).digest("hex");
+  const newHashHex = createPasscodeHash(newPasscode);
   const saveRes = await updateSetting("", "superadmin_passcode_hash", newHashHex);
 
   if (!saveRes.success) {
@@ -177,7 +214,27 @@ export async function updateSuperadminPasscode(
 
 export async function logout(): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.delete("gat_session");
+  cookieStore.delete(SESSION_COOKIE);
+}
+
+export async function getCurrentUser(): Promise<{ name: string; email: string; roles: string[]; activeRole: string } | null> {
+  const session = await readSession();
+  if (!session || session.kind !== "user" || !session.email || !session.name) return null;
+  return { name: session.name, email: session.email, roles: session.roles, activeRole: session.activeRole };
+}
+
+export async function isSuperadminSessionValid(): Promise<boolean> {
+  const session = await readSession();
+  return !!session && isSuperadminElevated(session);
+}
+
+export async function switchActiveRole(role: string): Promise<{ success: boolean; error?: string; activeRole?: string }> {
+  const session = await readSession();
+  if (!session || session.kind !== "user") return { success: false, error: "Unauthorized" };
+  const requested = normalizeRole(role);
+  if (!canSwitchToRole(session.roles, requested)) return { success: false, error: "Role is not assigned to this user." };
+  const saved = await setSession({ ...session, activeRole: requested });
+  return saved ? { success: true, activeRole: requested } : { success: false, error: "Unable to update session." };
 }
 
 export async function isSessionValid(): Promise<boolean> {
@@ -187,6 +244,7 @@ export async function isSessionValid(): Promise<boolean> {
 // ── Users & Roles Management (Central Auth DB) ───────────────
 export async function getUsers(): Promise<UserWithRole[]> {
   await ensureDb();
+  if (!(await requireSuperadmin())) return [];
   try {
     const res = await authClient.execute(`
       SELECT 
@@ -228,6 +286,7 @@ export async function getUsers(): Promise<UserWithRole[]> {
 
 export async function getRoles(): Promise<Role[]> {
   await ensureDb();
+  if (!(await requireSuperadmin())) return [];
   try {
     const res = await authClient.execute(`SELECT id, name FROM roles ORDER BY id ASC`);
     return res.rows.map((row: any) => ({
@@ -244,7 +303,11 @@ export async function getRoles(): Promise<Role[]> {
 
 export async function createUser(data: { email: string; nim: string; name: string; role_ids: number[] }): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  if (!(await checkSession())) return { success: false, error: "Unauthorized" };
+  if (!(await requireSuperadmin())) return { success: false, error: "Unauthorized" };
+  if (!data.email?.trim() || !data.nim?.trim() || !data.name?.trim()) return { success: false, error: "Email, NIM, and name are required." };
+  if (!/^\S+@\S+\.\S+$/.test(data.email.trim()) || !Array.isArray(data.role_ids) || data.role_ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+    return { success: false, error: "Invalid user data." };
+  }
   try {
     const userRes = await authClient.execute({
       sql: `INSERT INTO users (email, nim, name) VALUES (?, ?, ?)`,
@@ -268,7 +331,11 @@ export async function createUser(data: { email: string; nim: string; name: strin
 
 export async function updateUser(id: number, data: { email: string; nim: string; name: string; role_ids: number[] }): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  if (!(await checkSession())) return { success: false, error: "Unauthorized" };
+  if (!(await requireSuperadmin())) return { success: false, error: "Unauthorized" };
+  if (!Number.isInteger(id) || id <= 0 || !data.email?.trim() || !data.nim?.trim() || !data.name?.trim()) return { success: false, error: "Invalid user data." };
+  if (!/^\S+@\S+\.\S+$/.test(data.email.trim()) || !Array.isArray(data.role_ids) || data.role_ids.some((roleId) => !Number.isInteger(roleId) || roleId <= 0)) {
+    return { success: false, error: "Invalid user data." };
+  }
   try {
     await authClient.execute({
       sql: `UPDATE users SET email = ?, nim = ?, name = ? WHERE id = ?`,
@@ -293,7 +360,8 @@ export async function updateUser(id: number, data: { email: string; nim: string;
 
 export async function deleteUser(id: number): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  if (!(await checkSession())) return { success: false, error: "Unauthorized" };
+  if (!(await requireSuperadmin())) return { success: false, error: "Unauthorized" };
+  if (!Number.isInteger(id) || id <= 0) return { success: false, error: "Invalid user ID." };
   try {
     await authClient.execute({
       sql: `DELETE FROM user_roles WHERE user_id = ?`,
@@ -326,6 +394,24 @@ function rowToButton(row: any): Button {
   };
 }
 
+type ButtonInput = {
+  button_name: string;
+  source_type: "link" | "embed" | "code";
+  source: string;
+  icon: string;
+  image_url?: string;
+  category?: string;
+  allowed_roles?: string;
+};
+
+function validateButtonInput(data: ButtonInput): string | null {
+  if (!data || !data.button_name?.trim() || !data.source?.trim() || !data.icon?.trim()) return "Name, source, and icon are required.";
+  if (!["link", "embed", "code"].includes(data.source_type)) return "Invalid source type.";
+  if (data.button_name.length > 120 || data.source.length > 100_000 || data.icon.length > 80) return "Button data exceeds the allowed length.";
+  if (data.allowed_roles && !/^(all|[a-z]+(?:,[a-z]+)*)$/i.test(data.allowed_roles.trim())) return "Invalid role permissions.";
+  return null;
+}
+
 // ── Public ────────────────────────────────────────────────────
 /**
  * Returns all buttons ordered by `order` ascending.
@@ -336,7 +422,9 @@ export async function getButtons(): Promise<Button[]> {
     const result = await client.execute(
       `SELECT * FROM buttons ORDER BY "order" ASC, id ASC`
     );
-    return result.rows.map(rowToButton);
+    const buttons = result.rows.map(rowToButton);
+    const session = await readSession();
+    return buttons.filter((button) => canAccessResource(session, button));
   } catch (error) {
     console.error("Error in getButtons:", error);
     return [];
@@ -349,20 +437,13 @@ export async function getButtons(): Promise<Button[]> {
  */
 export async function addButton(
   passcode: string,
-  data: {
-    button_name: string;
-    source_type: "link" | "embed" | "code";
-    source: string;
-    icon: string;
-    image_url?: string;
-    category?: string;
-    allowed_roles?: string;
-  }
+  data: ButtonInput
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (passcode ? (await verifyPasscode(passcode)).success : false);
-  if (!isAuthorized)
-    return { success: false, error: "Unauthorized" };
+  void passcode;
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  const validationError = validateButtonInput(data);
+  if (validationError) return { success: false, error: validationError };
 
   try {
     const res = await client.execute(
@@ -395,20 +476,14 @@ export async function addButton(
 export async function updateButton(
   passcode: string,
   id: number,
-  data: {
-    button_name: string;
-    source_type: "link" | "embed" | "code";
-    source: string;
-    icon: string;
-    image_url?: string;
-    category?: string;
-    allowed_roles?: string;
-  }
+  data: ButtonInput
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (passcode ? (await verifyPasscode(passcode)).success : false);
-  if (!isAuthorized)
-    return { success: false, error: "Unauthorized" };
+  void passcode;
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  if (!Number.isInteger(id) || id <= 0) return { success: false, error: "Invalid button ID." };
+  const validationError = validateButtonInput(data);
+  if (validationError) return { success: false, error: validationError };
 
   try {
     await client.execute({
@@ -441,9 +516,9 @@ export async function deleteButton(
   id: number
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (passcode ? (await verifyPasscode(passcode)).success : false);
-  if (!isAuthorized)
-    return { success: false, error: "Unauthorized" };
+  void passcode;
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  if (!Number.isInteger(id) || id <= 0) return { success: false, error: "Invalid button ID." };
 
   try {
     await client.execute({ sql: `DELETE FROM buttons WHERE id = ?`, args: [id] });
@@ -461,9 +536,11 @@ export async function reorderButtons(
   orderedIds: number[]
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (passcode ? (await verifyPasscode(passcode)).success : false);
-  if (!isAuthorized)
-    return { success: false, error: "Unauthorized" };
+  void passcode;
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  if (!Array.isArray(orderedIds) || orderedIds.some((id) => !Number.isInteger(id) || id <= 0) || new Set(orderedIds).size !== orderedIds.length) {
+    return { success: false, error: "Invalid button order." };
+  }
 
 
   try {
@@ -483,6 +560,7 @@ export async function reorderButtons(
 
 export async function getSetting(key: string): Promise<string> {
   await ensureDb();
+  if (!(await requireAdministrator())) return "";
   try {
     const result = await client.execute({
       sql: "SELECT value FROM settings WHERE key = ?",
@@ -518,9 +596,9 @@ export async function updateSetting(
   value: string
 ): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
-  const isAuthorized = (await checkSession()) || (passcode ? (await verifyPasscode(passcode)).success : false);
-  if (!isAuthorized)
-    return { success: false, error: "Unauthorized" };
+  void passcode;
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  if (!/^[a-z0-9_]{1,80}$/i.test(key) || value.length > 1_000_000) return { success: false, error: "Invalid setting." };
   try {
     await client.execute({
       sql: "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
@@ -535,11 +613,14 @@ export async function updateSetting(
 // ── User Favorites Actions ──────────────────────────────────
 export async function getUserFavorites(userEmail: string): Promise<number[]> {
   await ensureDb();
-  if (!userEmail) return [];
+  const session = await readSession();
+  if (!session || session.kind !== "user" || !session.email) return [];
+  const sessionEmail = session.email.trim().toLowerCase();
+  if (userEmail && userEmail.trim().toLowerCase() !== sessionEmail) return [];
   try {
     const userRes = await authClient.execute({
       sql: "SELECT id FROM users WHERE LOWER(email) = ?",
-      args: [userEmail.trim().toLowerCase()],
+      args: [sessionEmail],
     });
     if (userRes.rows.length === 0) return [];
     const userId = Number(userRes.rows[0].id);
@@ -560,11 +641,16 @@ export async function toggleUserFavorite(
   buttonId: number
 ): Promise<{ success: boolean; isFavorite: boolean; error?: string }> {
   await ensureDb();
-  if (!userEmail || !buttonId) return { success: false, isFavorite: false, error: "Missing parameter" };
+  const session = await readSession();
+  if (!session || session.kind !== "user" || !session.email) return { success: false, isFavorite: false, error: "Unauthorized" };
+  const sessionEmail = session.email.trim().toLowerCase();
+  if ((userEmail && userEmail.trim().toLowerCase() !== sessionEmail) || !Number.isInteger(buttonId) || buttonId <= 0) {
+    return { success: false, isFavorite: false, error: "Invalid parameter" };
+  }
   try {
     const userRes = await authClient.execute({
       sql: "SELECT id FROM users WHERE LOWER(email) = ?",
-      args: [userEmail.trim().toLowerCase()],
+      args: [sessionEmail],
     });
     if (userRes.rows.length === 0) return { success: false, isFavorite: false, error: "User not found" };
     const userId = Number(userRes.rows[0].id);
