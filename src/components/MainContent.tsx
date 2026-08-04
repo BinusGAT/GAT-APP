@@ -304,7 +304,7 @@ function AdminPanel({
       : fCategory;
     const finalRoles = fAllowedRoles.includes("all") || fAllowedRoles.length === 0
       ? "all"
-      : fAllowedRoles.join(",");
+      : Array.from(new Set(["administrator", ...fAllowedRoles])).join(",");
 
     const data = {
       button_name: fName.trim(),
@@ -902,10 +902,12 @@ function AdminPanel({
                     { id: "student", label: "Student" },
                     { id: "lecturer", label: "Lecturer" },
                   ].map((roleItem) => {
+                    const isAdministrator = roleItem.id === "administrator";
                     const isChecked =
-                      roleItem.id === "all"
+                      isAdministrator ||
+                      (roleItem.id === "all"
                         ? fAllowedRoles.includes("all")
-                        : !fAllowedRoles.includes("all") && fAllowedRoles.includes(roleItem.id);
+                        : !fAllowedRoles.includes("all") && fAllowedRoles.includes(roleItem.id));
 
                     return (
                       <label
@@ -921,12 +923,15 @@ function AdminPanel({
                           padding: "6px 12px",
                           borderRadius: 8,
                           border: `1px solid ${isChecked ? "var(--primary-color, #4F46E5)" : "var(--border-color)"}`,
-                          cursor: "pointer",
+                          cursor: isAdministrator ? "not-allowed" : "pointer",
+                          opacity: isAdministrator ? 0.8 : 1,
                         }}
                       >
                         <input
                           type="checkbox"
                           checked={isChecked}
+                          disabled={isAdministrator}
+                          aria-label={isAdministrator ? "Administrator always has access" : roleItem.label}
                           onChange={(e) => {
                             if (roleItem.id === "all") {
                               setFAllowedRoles(["all"]);

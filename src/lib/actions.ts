@@ -544,7 +544,7 @@ export async function getUserFavorites(userEmail: string): Promise<number[]> {
     if (userRes.rows.length === 0) return [];
     const userId = Number(userRes.rows[0].id);
 
-    const favRes = await authClient.execute({
+    const favRes = await client.execute({
       sql: "SELECT button_id FROM user_favorites WHERE user_id = ?",
       args: [userId],
     });
@@ -569,20 +569,20 @@ export async function toggleUserFavorite(
     if (userRes.rows.length === 0) return { success: false, isFavorite: false, error: "User not found" };
     const userId = Number(userRes.rows[0].id);
 
-    const checkRes = await authClient.execute({
+    const checkRes = await client.execute({
       sql: "SELECT 1 FROM user_favorites WHERE user_id = ? AND button_id = ?",
       args: [userId, buttonId],
     });
 
     const isFav = checkRes.rows.length > 0;
     if (isFav) {
-      await authClient.execute({
+      await client.execute({
         sql: "DELETE FROM user_favorites WHERE user_id = ? AND button_id = ?",
         args: [userId, buttonId],
       });
       return { success: true, isFavorite: false };
     } else {
-      await authClient.execute({
+      await client.execute({
         sql: "INSERT OR IGNORE INTO user_favorites (user_id, button_id) VALUES (?, ?)",
         args: [userId, buttonId],
       });

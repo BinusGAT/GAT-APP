@@ -253,19 +253,18 @@ export default function GatAppPage({ params }: PageProps) {
 
   // Filter visible buttons based on user activeRole / public access
   const visibleButtons = buttons.filter((btn) => {
-    const rawAllowed = (btn.allowed_roles || "all").toLowerCase();
-    if (rawAllowed === "all" || rawAllowed.includes("all")) return true;
-    if (!currentUser || !currentUser.activeRole) return false;
+    const userRole = currentUser?.activeRole?.toLowerCase();
 
-    const userRole = currentUser.activeRole.toLowerCase();
-    const allowedList = rawAllowed.split(",").map((r) => r.trim());
-
-    if (
-      ["admin", "administrator", "superadmin"].includes(userRole) &&
-      (allowedList.includes("admin") || allowedList.includes("administrator") || allowedList.includes("superadmin"))
-    ) {
+    // Administrators always have access, regardless of per-button role settings.
+    if (userRole && ["admin", "administrator", "superadmin"].includes(userRole)) {
       return true;
     }
+
+    const rawAllowed = (btn.allowed_roles || "all").toLowerCase();
+    if (rawAllowed === "all" || rawAllowed.includes("all")) return true;
+    if (!userRole) return false;
+
+    const allowedList = rawAllowed.split(",").map((r) => r.trim());
 
     return allowedList.includes(userRole);
   });

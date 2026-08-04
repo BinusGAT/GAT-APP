@@ -103,17 +103,6 @@ export async function initDb() {
       )
     `);
 
-    // 4. User Favorites Table (Central Auth DB)
-    await authClient.execute(`
-      CREATE TABLE IF NOT EXISTS user_favorites (
-        user_id INTEGER NOT NULL,
-        button_id INTEGER NOT NULL,
-        PRIMARY KEY (user_id, button_id),
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
-      )
-    `);
-
     // 3. Buttons Table (GAT App Data DB)
     await client.execute(`
       CREATE TABLE IF NOT EXISTS buttons (
@@ -129,6 +118,37 @@ export async function initDb() {
         updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // 4. User Favorites Table (GAT App Data DB)
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS user_favorites (
+        user_id INTEGER NOT NULL,
+        button_id INTEGER NOT NULL,
+        PRIMARY KEY (user_id, button_id),
+        FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Migration: Transfer legacy user_favorites from Central Auth DB to GAT App DB if existing
+    try {
+      if (authClient !== client) {
+        const legacyFavCheck = await authClient.execute(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='user_favorites'`
+        );
+        if (legacyFavCheck.rows.length > 0) {
+          const oldFavs = await authClient.execute(`SELECT user_id, button_id FROM user_favorites`);
+          for (const row of oldFavs.rows) {
+            await client.execute({
+              sql: `INSERT OR IGNORE INTO user_favorites (user_id, button_id) VALUES (?, ?)`,
+              args: [row.user_id, row.button_id],
+            });
+          }
+          await authClient.execute(`DROP TABLE IF EXISTS user_favorites`);
+        }
+      }
+    } catch (migErr) {
+      console.error("Migration error for user_favorites from auth DB:", migErr);
+    }
 
     // Column migration for existing databases
     try {
