@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import {
   ArrowSquareOut,
-  LockKey,
   Plus,
   CaretUp,
   CaretDown,
@@ -13,7 +13,6 @@ import {
   House,
   Code,
   FrameCorners,
-  Cube,
   Shield,
   User,
   MagnifyingGlass,
@@ -21,9 +20,8 @@ import {
   ChalkboardTeacher,
   Lightning,
 } from "@phosphor-icons/react";
-import { Button } from "@/lib/db";
+import { Button, Role, UserWithRole } from "@/lib/db";
 import {
-  verifyUserCredentials,
   verifyPasscode,
   isSuperadminSessionValid,
   updateSuperadminPasscode,
@@ -34,8 +32,6 @@ import {
   reorderButtons,
   getSetting,
   updateSetting,
-  isSessionValid,
-  logout,
   getUsers,
   getRoles,
   createUser,
@@ -54,11 +50,6 @@ const AVAILABLE_ICONS = [
   "PresentationChart","ChartBar","Lightning","Leaf","Star","Heart",
 ];
 
-const GRADIENTS = [
-  "gradient-1","gradient-2","gradient-3","gradient-4","gradient-5",
-  "gradient-6","gradient-7","gradient-8","gradient-9","gradient-10",
-];
-
 // Keep the passcode-management implementation available for future use while
 // hiding it from the Superadmin interface for now.
 const SHOW_PASSCODE_MANAGEMENT = false;
@@ -70,6 +61,10 @@ const SOURCE_COLORS: Record<string, { color: string; bg: string }> = {
   code:  { color: "#8b5cf6", bg: "#f5f3ff" },
 };
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Content Renderer — embed or code
 // ─────────────────────────────────────────────────────────────
@@ -80,10 +75,6 @@ function ContentRenderer({
   onGoHome: () => void;
 }) {
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-  }, [button.id]);
 
   if (button.source_type === "embed") {
     return (
@@ -219,21 +210,8 @@ function AdminPanel({
       setHomeContentType((type as "html" | "embed") || "html");
       setHomeContentValue(value || "");
     }
-    loadData();
-  }, []);
-
-  const loadHomeSettings = async () => {
-    try {
-      const [type, value] = await Promise.all([
-        getSetting("home_content_type"),
-        getSetting("home_content_value"),
-      ]);
-      setHomeContentType((type as "html" | "embed") || "html");
-      setHomeContentValue(value || "");
-    } catch (e) {
-      console.error(e);
-    }
-  };
+    void loadData();
+  }, [onRefresh]);
 
   const handleSaveHomeContent = async () => {
     setIsSaving(true);
@@ -250,8 +228,8 @@ function AdminPanel({
       } else {
         setHomeSaveMsg(r1.error || r2.error || "Failed to save.");
       }
-    } catch (err: any) {
-      setHomeSaveMsg(err.message || "Failed to save.");
+    } catch (err: unknown) {
+      setHomeSaveMsg(errorMessage(err, "Failed to save."));
     } finally {
       setHomeSaving(false);
       setIsSaving(false);
@@ -339,8 +317,8 @@ function AdminPanel({
       } else {
         alert(res.error || "Failed to save button.");
       }
-    } catch (err: any) {
-      alert(err.message || "Failed to save button.");
+    } catch (err: unknown) {
+      alert(errorMessage(err, "Failed to save button."));
     } finally {
       setIsSaving(false);
     }
@@ -358,8 +336,8 @@ function AdminPanel({
       } else {
         alert(res.error || "Failed to delete button.");
       }
-    } catch (err: any) {
-      alert(err.message || "Failed to delete button.");
+    } catch (err: unknown) {
+      alert(errorMessage(err, "Failed to delete button."));
     } finally {
       setIsSaving(false);
     }
@@ -379,8 +357,8 @@ function AdminPanel({
         arr.map((b) => b.id)
       );
       onRefresh();
-    } catch (err: any) {
-      console.error(err);
+    } catch (err: unknown) {
+      console.error(errorMessage(err, "Failed to reorder buttons."));
     } finally {
       setIsSaving(false);
     }
@@ -477,9 +455,12 @@ function AdminPanel({
                   {/* Icon / Image */}
                   <div className="config-item-icon" style={{ background: "transparent", color: "var(--text-secondary)", width: "auto", height: "auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     {btn.image_url ? (
-                      <img
+                      <Image
                         src={btn.image_url}
                         alt={btn.button_name}
+                        width={24}
+                        height={24}
+                        unoptimized
                         style={{ width: 24, height: 24, objectFit: "contain", borderRadius: 4 }}
                         onError={(e) => {
                           e.currentTarget.style.display = "none";
@@ -889,9 +870,12 @@ function AdminPanel({
                         padding: 4,
                       }}
                     >
-                      <img
+                      <Image
                         src={fImageUrl}
                         alt="App Logo Preview"
+                        width={40}
+                        height={40}
+                        unoptimized
                         style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
                         onError={(e) => {
                           e.currentTarget.style.display = "none";
@@ -999,14 +983,14 @@ function AdminPanel({
 // User & Role Management Component (Central Auth DB)
 // ─────────────────────────────────────────────────────────────
 function UserManagementTab() {
-  const [users, setUsers] = useState<any[]>([]);
-  const [roles, setRoles] = useState<any[]>([]);
+  const [users, setUsers] = useState<UserWithRole[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Modal State
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [editingUser, setEditingUser] = useState<UserWithRole | null>(null);
 
   // Form Fields
   const [uName, setUName] = useState("");
@@ -1015,27 +999,25 @@ function UserManagementTab() {
   const [uRoleIds, setURoleIds] = useState<number[]>([2]);
   const [saving, setSaving] = useState(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [uRes, rRes] = await Promise.all([getUsers(), getRoles()]);
       setUsers(uRes);
       setRoles(rRes);
-      if (rRes.length > 0 && (!uRoleIds || uRoleIds.length === 0)) {
-        setURoleIds([rRes[0].id]);
-      }
     } catch (err) {
       console.error("Failed to load user management data", err);
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadData();
   }, []);
 
-  const openUserModal = (user: any | null) => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadData(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadData]);
+
+  const openUserModal = (user: UserWithRole | null) => {
     if (user) {
       setEditingUser(user);
       setUName(user.name);
@@ -1075,8 +1057,8 @@ function UserManagementTab() {
       } else {
         alert(res.error || "Failed to save user.");
       }
-    } catch (err: any) {
-      alert(err.message || "Failed to save user.");
+    } catch (err: unknown) {
+      alert(errorMessage(err, "Failed to save user."));
     } finally {
       setSaving(false);
     }
@@ -1091,8 +1073,8 @@ function UserManagementTab() {
       } else {
         alert(res.error || "Failed to delete user.");
       }
-    } catch (err: any) {
-      alert(err.message || "Failed to delete user.");
+    } catch (err: unknown) {
+      alert(errorMessage(err, "Failed to delete user."));
     }
   };
 
@@ -1158,8 +1140,8 @@ function UserManagementTab() {
       } else {
         setPassMsg({ text: res.error || "Failed to update passcode.", isError: true });
       }
-    } catch (err: any) {
-      setPassMsg({ text: err.message || "Failed to update passcode.", isError: true });
+    } catch (err: unknown) {
+      setPassMsg({ text: errorMessage(err, "Failed to update passcode."), isError: true });
     } finally {
       setUpdatingPass(false);
     }
@@ -1472,7 +1454,7 @@ export default function MainContent({
     return <AdminPanel initialButtons={buttons} onRefresh={onRefresh} />;
   }
   if (button) {
-    return <ContentRenderer button={button} onGoHome={onGoHome} />;
+    return <ContentRenderer key={button.id} button={button} onGoHome={onGoHome} />;
   }
   return null;
 }

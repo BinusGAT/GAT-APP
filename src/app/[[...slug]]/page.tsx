@@ -19,7 +19,6 @@ import {
   GraduationCap,
   CheckCircle,
   X,
-  Smiley,
 } from "@phosphor-icons/react";
 
 // Helper to generate URL-friendly slug
@@ -86,7 +85,8 @@ export default function GatAppPage({ params }: PageProps) {
   }, []);
 
   useEffect(() => {
-    fetchButtons();
+    const timer = window.setTimeout(() => void fetchButtons(), 0);
+    return () => window.clearTimeout(timer);
   }, [fetchButtons]);
 
   // Determine active view based on slug parameter in URL path
@@ -183,8 +183,8 @@ export default function GatAppPage({ params }: PageProps) {
       } else {
         setLoginError(res.error || "Invalid Email or NIM credentials.");
       }
-    } catch (err: any) {
-      setLoginError(err.message || "Authentication failed.");
+    } catch (err: unknown) {
+      setLoginError(err instanceof Error ? err.message : "Authentication failed.");
     } finally {
       setIsLoggingIn(false);
     }

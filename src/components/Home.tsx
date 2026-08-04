@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { MagnifyingGlass, Star } from "@phosphor-icons/react";
 import { getHomeSettings, getButtons, getUserFavorites, toggleUserFavorite } from "@/lib/actions";
@@ -36,6 +37,7 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
     return cachedHomeButtons;
   });
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [favoriteIds, setFavoriteIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(() => {
     if (propsButtons && propsButtons.length > 0) return false;
@@ -66,15 +68,6 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
 
     await toggleUserFavorite(currentUser.email, buttonId);
   };
-
-  // Sync prop changes instantly
-  useEffect(() => {
-    if (propsButtons && propsButtons.length > 0) {
-      setButtons(propsButtons);
-      cachedHomeButtons = propsButtons;
-      setLoading(false);
-    }
-  }, [propsButtons]);
 
   useEffect(() => {
     async function loadHomeData() {
@@ -161,8 +154,6 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
   }
 
   // ── Default Portal Apps Mode (Microsoft My Apps style) ──
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
-
   const STANDARD_CATS = ["apps", "tools", "resources"];
 
   // Extract all unique category strings from buttons
@@ -273,10 +264,13 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
                   )}
                   <div className="portal-app-tile">
                     {btn.image_url ? (
-                      <img
+                      <Image
                         src={btn.image_url}
                         alt={btn.button_name}
                         className="portal-app-img"
+                        width={98}
+                        height={98}
+                        unoptimized
                       />
                     ) : (
                       getIconComponent(btn.icon, 44)
@@ -327,10 +321,13 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
                     )}
                     <div className="portal-app-tile">
                       {btn.image_url ? (
-                        <img
+                        <Image
                           src={btn.image_url}
                           alt={btn.button_name}
                           className="portal-app-img"
+                          width={98}
+                          height={98}
+                          unoptimized
                         />
                       ) : (
                         getIconComponent(btn.icon, 44)
@@ -356,4 +353,3 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
     </div>
   );
 }
-

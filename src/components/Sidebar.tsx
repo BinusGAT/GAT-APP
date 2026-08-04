@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import {
   ArrowSquareOut,
   FrameCorners,
@@ -60,19 +61,6 @@ export function getIconComponent(iconName: string, size = 20, weight: "regular" 
   if (IconComponent) return <IconComponent size={size} weight={weight} />;
   return <Cube size={size} weight={weight} />;
 }
-
-// ── Source type metadata ──────────────────────────────────────
-const SOURCE_META = {
-  link:  { icon: <ArrowSquareOut size={11} weight="bold" />, color: "#3b82f6" },
-  embed: { icon: <FrameCorners   size={11} weight="bold" />, color: "#10b981" },
-  code:  { icon: <Code           size={11} weight="bold" />, color: "#8b5cf6" },
-};
-
-// ── Gradient classes ──────────────────────────────────────────
-const GRADIENTS = [
-  "gradient-1","gradient-2","gradient-3","gradient-4","gradient-5",
-  "gradient-6","gradient-7","gradient-8","gradient-9","gradient-10",
-];
 
 interface SidebarProps {
   buttons: Button[];
@@ -159,9 +147,12 @@ export default function Sidebar({
                 >
                   <div className="menu-item-icon-container">
                     {btn.image_url ? (
-                      <img
+                      <Image
                         src={btn.image_url}
                         alt={btn.button_name}
+                        width={18}
+                        height={18}
+                        unoptimized
                         style={{ width: 18, height: 18, objectFit: "contain", borderRadius: 3 }}
                         onError={(e) => {
                           e.currentTarget.style.display = "none";

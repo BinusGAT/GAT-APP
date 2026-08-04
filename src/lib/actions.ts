@@ -23,6 +23,10 @@ import {
 } from "./permissions";
 
 let isInitialized = false;
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 async function ensureDb() {
   if (!isInitialized) {
     try {
@@ -138,8 +142,8 @@ export async function verifyUserCredentials(
         roles: normalizedRoles,
       },
     };
-  } catch (error: any) {
-    return { success: false, error: error.message || "Authentication failed." };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Authentication failed.") };
   }
 }
 
@@ -259,7 +263,7 @@ export async function getUsers(): Promise<UserWithRole[]> {
       GROUP BY u.id
       ORDER BY u.id ASC
     `);
-    return res.rows.map((row: any) => {
+    return res.rows.map((row) => {
       const roleIdsStr = String(row.role_ids_str || "2");
       const roleNamesStr = String(row.role_names_str || "student");
       const role_ids = roleIdsStr.split(",").map((id) => Number(id.trim())).filter((n) => !isNaN(n));
@@ -288,7 +292,7 @@ export async function getRoles(): Promise<Role[]> {
   if (!(await requireSuperadmin())) return [];
   try {
     const res = await authClient.execute(`SELECT id, name FROM roles ORDER BY id ASC`);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row) => ({
       id: Number(row.id),
       name: String(row.name),
       description: "",
@@ -323,8 +327,8 @@ export async function createUser(data: { email: string; nim: string; name: strin
       }
     }
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message || "Failed to create user." };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to create user.") };
   }
 }
 
@@ -352,8 +356,8 @@ export async function updateUser(id: number, data: { email: string; nim: string;
       });
     }
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message || "Failed to update user." };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to update user.") };
   }
 }
 
@@ -371,13 +375,13 @@ export async function deleteUser(id: number): Promise<{ success: boolean; error?
       args: [id],
     });
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message || "Failed to delete user." };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to delete user.") };
   }
 }
 
 // ── Helper ────────────────────────────────────────────────────
-function rowToButton(row: any): Button {
+function rowToButton(row: Record<string, unknown>): Button {
   return {
     id: Number(row.id),
     button_name: String(row.button_name),
@@ -464,8 +468,8 @@ export async function addButton(
       ],
     });
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to add button.") };
   }
 }
 
@@ -502,8 +506,8 @@ export async function updateButton(
       ],
     });
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to update button.") };
   }
 }
 
@@ -522,8 +526,8 @@ export async function deleteButton(
   try {
     await client.execute({ sql: `DELETE FROM buttons WHERE id = ?`, args: [id] });
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to delete button.") };
   }
 }
 
@@ -550,8 +554,8 @@ export async function reorderButtons(
       });
     }
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to reorder buttons.") };
   }
 }
 
@@ -604,8 +608,8 @@ export async function updateSetting(
       args: [key, value],
     });
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: errorMessage(error, "Failed to update setting.") };
   }
 }
 
@@ -628,7 +632,7 @@ export async function getUserFavorites(userEmail: string): Promise<number[]> {
       sql: "SELECT button_id FROM user_favorites WHERE user_id = ?",
       args: [userId],
     });
-    return favRes.rows.map((row: any) => Number(row.button_id));
+    return favRes.rows.map((row) => Number(row.button_id));
   } catch (error) {
     console.error("Error in getUserFavorites:", error);
     return [];
@@ -673,7 +677,7 @@ export async function toggleUserFavorite(
       });
       return { success: true, isFavorite: true };
     }
-  } catch (error: any) {
-    return { success: false, isFavorite: false, error: error.message || "Failed to toggle favorite" };
+  } catch (error: unknown) {
+    return { success: false, isFavorite: false, error: errorMessage(error, "Failed to toggle favorite") };
   }
 }

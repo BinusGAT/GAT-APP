@@ -154,19 +154,19 @@ export async function initDb() {
     try {
       const tableInfo = await client.execute(`PRAGMA table_info(buttons)`);
       const hasImageUrl = tableInfo.rows.some(
-        (row: any) => String(row.name).toLowerCase() === "image_url"
+        (row) => String(row.name).toLowerCase() === "image_url"
       );
       if (!hasImageUrl) {
         await client.execute(`ALTER TABLE buttons ADD COLUMN image_url TEXT;`);
       }
       const hasCategory = tableInfo.rows.some(
-        (row: any) => String(row.name).toLowerCase() === "category"
+        (row) => String(row.name).toLowerCase() === "category"
       );
       if (!hasCategory) {
         await client.execute(`ALTER TABLE buttons ADD COLUMN category TEXT DEFAULT 'apps';`);
       }
       const hasAllowedRoles = tableInfo.rows.some(
-        (row: any) => String(row.name).toLowerCase() === "allowed_roles"
+        (row) => String(row.name).toLowerCase() === "allowed_roles"
       );
       if (!hasAllowedRoles) {
         await client.execute(`ALTER TABLE buttons ADD COLUMN allowed_roles TEXT DEFAULT 'all';`);
@@ -178,7 +178,7 @@ export async function initDb() {
     try {
       const userTableInfo = await authClient.execute(`PRAGMA table_info(users)`);
       const hasUpdatedAt = userTableInfo.rows.some(
-        (row: any) => String(row.name).toLowerCase() === "updated_at"
+        (row) => String(row.name).toLowerCase() === "updated_at"
       );
       if (!hasUpdatedAt) {
         await authClient.execute(`ALTER TABLE users ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);

@@ -5,7 +5,8 @@ export async function GET() {
   try {
     const buttons = await getButtons();
     return NextResponse.json(buttons);
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to load buttons.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

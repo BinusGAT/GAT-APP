@@ -58,3 +58,22 @@ next-env.d.ts
 
 # reference files
 /ref/
+
+/tests/
+
+# Package registry credentials
+.npmrc
+
+# Additional certificates and private keys
+*.key
+*.p12
+*.pfx
+
+# Cloud/service credentials
+credentials.json
+service-account*.json
+secrets/
+.secrets/
+
+# Local logs
+*.log
