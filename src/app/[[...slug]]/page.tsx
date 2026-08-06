@@ -6,7 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Home from "@/components/Home";
 import MainContent from "@/components/MainContent";
 import { Button } from "@/lib/db";
-import { getButtons, getCurrentUser, verifyUserCredentials, logout, switchActiveRole } from "@/lib/actions";
+import { getButtons, getCurrentUser, verifyUserCredentials, logout, switchActiveRole, recordApplicationOpen } from "@/lib/actions";
 import { formatRoleName, isAdministratorRole } from "@/lib/permissions";
 import {
   DotsNine,
@@ -99,13 +99,6 @@ export default function GatAppPage({ params }: PageProps) {
     isAdministratorRole(currentUser.activeRole)
   );
 
-  // Redirect / to /home
-  useEffect(() => {
-    if (!currentSlug && !loading) {
-      router.replace("/home");
-    }
-  }, [currentSlug, loading, router]);
-
   // Protect /settings route if not admin
   useEffect(() => {
     if (sessionLoaded && currentSlug === "settings" && !isAdmin && !loading) {
@@ -134,6 +127,7 @@ export default function GatAppPage({ params }: PageProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const handleButtonClick = (button: Button) => {
+    void recordApplicationOpen(button.id);
     if (button.source_type === "link") {
       window.open(button.source, "_blank", "noopener,noreferrer");
       return;
@@ -401,12 +395,12 @@ export default function GatAppPage({ params }: PageProps) {
               </div>
 
               <div className="form-group" style={{ marginBottom: 20 }}>
-                <label className="form-label" htmlFor="header-login-nim">Password</label>
+                <label className="form-label" htmlFor="header-login-nim">NIM</label>
                 <input
                   id="header-login-nim"
                   type="password"
                   className="form-input"
-                  placeholder="Enter Password"
+                  placeholder="Enter NIM"
                   value={loginNim}
                   onChange={(e) => setLoginNim(e.target.value)}
                   required

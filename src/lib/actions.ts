@@ -1,5 +1,7 @@
 "use server";
 
+import dns from "node:dns/promises";
+import net from "node:net";
 import { client, authClient, initDb, Button, UserWithRole, Role } from "./db";
 import { cookies } from "next/headers";
 import {
@@ -21,6 +23,18 @@ import {
   normalizeRole,
   normalizeRoles,
 } from "./permissions";
+import {
+  LOGIN_ACCOUNT_POLICY,
+  LOGIN_IP_POLICY,
+  SUPERADMIN_ACCOUNT_POLICY,
+  SUPERADMIN_IP_POLICY,
+  createRateLimitKey,
+  formatLockMessage,
+  getClientIpHash,
+  getLockRemainingMs,
+  recordFailure,
+  resetRateLimit,
+} from "./rate-limit";
 
 let isInitialized = false;
 function errorMessage(error: unknown, fallback: string): string {
@@ -48,12 +62,43 @@ async function readSession(): Promise<SessionPayload | null> {
   }
 }
 
-async function setSession(payload: Omit<SessionPayload, "issuedAt" | "expiresAt">): Promise<boolean> {
+async function writeAudit(
+  action: string,
+  targetType: string,
+  targetId?: string | number,
+  details?: Record<string, unknown>,
+  actor?: SessionPayload | null
+): Promise<void> {
+  try {
+    const session = actor === undefined ? await readSession() : actor;
+    await client.execute({
+      sql: `INSERT INTO audit_logs (actor_user_id, actor_email, action, target_type, target_id, details)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [
+        session?.userId || null,
+        session?.email || null,
+        action,
+        targetType,
+        targetId === undefined ? null : String(targetId),
+        details ? JSON.stringify(details) : null,
+      ],
+    });
+  } catch (error) {
+    console.error("Failed to write audit log:", error);
+  }
+}
+
+async function setSession(
+  payload: Omit<SessionPayload, "issuedAt" | "expiresAt">,
+  absoluteExpiresAt?: number
+): Promise<boolean> {
   const now = Date.now();
+  const expiresAt = absoluteExpiresAt ?? now + SESSION_MAX_AGE_SECONDS * 1000;
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) return false;
   const token = createSessionToken({
     ...payload,
     issuedAt: now,
-    expiresAt: now + SESSION_MAX_AGE_SECONDS * 1000,
+    expiresAt,
   });
   if (!token) return false;
   const cookieStore = await cookies();
@@ -61,7 +106,7 @@ async function setSession(payload: Omit<SessionPayload, "issuedAt" | "expiresAt"
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: Math.ceil((expiresAt - now) / 1000),
     sameSite: "strict",
   });
   return true;
@@ -95,6 +140,18 @@ export async function verifyUserCredentials(
       return { success: false, error: "Both Email and NIM are required." };
     }
 
+    const ipHash = await getClientIpHash();
+    const accountKey = createRateLimitKey("login-account-ip", `${cleanEmail}:${ipHash || ""}`);
+    const ipKey = createRateLimitKey("login-ip", ipHash || "");
+    if (!ipHash || !accountKey || !ipKey) {
+      return { success: false, error: "Authentication service is not configured securely." };
+    }
+
+    const lockRemaining = await getLockRemainingMs([accountKey, ipKey]);
+    if (lockRemaining > 0) {
+      return { success: false, error: formatLockMessage(lockRemaining) };
+    }
+
     const res = await authClient.execute({
       sql: `
         SELECT 
@@ -113,7 +170,17 @@ export async function verifyUserCredentials(
     });
 
     if (res.rows.length === 0) {
-      return { success: false, error: "Invalid Email or NIM. User not found." };
+      await Promise.all([
+        recordFailure(accountKey, LOGIN_ACCOUNT_POLICY),
+        recordFailure(ipKey, LOGIN_IP_POLICY),
+      ]);
+      const newLockRemaining = await getLockRemainingMs([accountKey, ipKey]);
+      return {
+        success: false,
+        error: newLockRemaining > 0
+          ? formatLockMessage(newLockRemaining)
+          : "Invalid Email or NIM.",
+      };
     }
 
     const userRow = res.rows[0];
@@ -132,6 +199,8 @@ export async function verifyUserCredentials(
     if (!sessionCreated) {
       return { success: false, error: "Server session secret is missing or too short." };
     }
+
+    await resetRateLimit(accountKey);
 
     return {
       success: true,
@@ -153,6 +222,19 @@ export async function verifyPasscode(passcode: string): Promise<{ success: boole
   const currentSession = await readSession();
   if (!currentSession || currentSession.kind !== "user" || !isAdministratorRole(currentSession.activeRole)) {
     return { success: false, error: "An Administrator user session is required." };
+  }
+
+  const ipHash = await getClientIpHash();
+  const administratorId = String(currentSession.userId || currentSession.email || "unknown");
+  const accountKey = createRateLimitKey("superadmin-account-ip", `${administratorId}:${ipHash || ""}`);
+  const ipKey = createRateLimitKey("superadmin-ip", ipHash || "");
+  if (!ipHash || !accountKey || !ipKey) {
+    return { success: false, error: "Authentication service is not configured securely." };
+  }
+
+  const lockRemaining = await getLockRemainingMs([accountKey, ipKey]);
+  if (lockRemaining > 0) {
+    return { success: false, error: formatLockMessage(lockRemaining) };
   }
 
   // Fetch stored passcode hash from DB settings
@@ -179,12 +261,23 @@ export async function verifyPasscode(passcode: string): Promise<{ success: boole
     const sessionCreated = await setSession({
       ...currentSession,
       superadminUntil: Date.now() + SUPERADMIN_ELEVATION_SECONDS * 1000,
-    });
+    }, currentSession.expiresAt);
     if (!sessionCreated) return { success: false, error: "Server session secret is missing or too short." };
+    await resetRateLimit(accountKey);
     return { success: true };
   }
 
-  return { success: false, error: "Invalid Superadmin Passcode." };
+  await Promise.all([
+    recordFailure(accountKey, SUPERADMIN_ACCOUNT_POLICY),
+    recordFailure(ipKey, SUPERADMIN_IP_POLICY),
+  ]);
+  const newLockRemaining = await getLockRemainingMs([accountKey, ipKey]);
+  return {
+    success: false,
+    error: newLockRemaining > 0
+      ? formatLockMessage(newLockRemaining)
+      : "Invalid Superadmin Passcode.",
+  };
 }
 
 export async function updateSuperadminPasscode(
@@ -216,8 +309,23 @@ export async function updateSuperadminPasscode(
 }
 
 export async function logout(): Promise<void> {
+  await ensureDb();
+  await writeAudit("user.logout", "session");
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE);
+}
+
+export async function exitSuperadmin(): Promise<{ success: boolean; error?: string }> {
+  const currentSession = await readSession();
+  if (!currentSession || currentSession.kind !== "user") {
+    return { success: false, error: "User session is no longer valid." };
+  }
+
+  const userSession = { ...currentSession, superadminUntil: undefined };
+  const saved = await setSession(userSession, currentSession.expiresAt);
+  return saved
+    ? { success: true }
+    : { success: false, error: "Unable to exit Superadmin mode." };
 }
 
 export async function getCurrentUser(): Promise<{ name: string; email: string; roles: string[]; activeRole: string } | null> {
@@ -236,7 +344,7 @@ export async function switchActiveRole(role: string): Promise<{ success: boolean
   if (!session || session.kind !== "user") return { success: false, error: "Unauthorized" };
   const requested = normalizeRole(role);
   if (!canSwitchToRole(session.roles, requested)) return { success: false, error: "Role is not assigned to this user." };
-  const saved = await setSession({ ...session, activeRole: requested });
+  const saved = await setSession({ ...session, activeRole: requested }, session.expiresAt);
   return saved ? { success: true, activeRole: requested } : { success: false, error: "Unable to update session." };
 }
 
@@ -453,7 +561,7 @@ export async function addButton(
       `SELECT MAX("order") as max_order FROM buttons`
     );
     const maxOrder = Number(res.rows[0]?.max_order ?? -1);
-    await client.execute({
+    const insertResult = await client.execute({
       sql: `INSERT INTO buttons (button_name, source_type, source, icon, image_url, category, allowed_roles, "order")
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
@@ -467,6 +575,7 @@ export async function addButton(
         maxOrder + 1,
       ],
     });
+    await writeAudit("button.created", "button", Number(insertResult.lastInsertRowid), { name: data.button_name });
     return { success: true };
   } catch (error: unknown) {
     return { success: false, error: errorMessage(error, "Failed to add button.") };
@@ -505,6 +614,7 @@ export async function updateButton(
         id,
       ],
     });
+    await writeAudit("button.updated", "button", id, { name: data.button_name });
     return { success: true };
   } catch (error: unknown) {
     return { success: false, error: errorMessage(error, "Failed to update button.") };
@@ -525,6 +635,7 @@ export async function deleteButton(
 
   try {
     await client.execute({ sql: `DELETE FROM buttons WHERE id = ?`, args: [id] });
+    await writeAudit("button.deleted", "button", id);
     return { success: true };
   } catch (error: unknown) {
     return { success: false, error: errorMessage(error, "Failed to delete button.") };
@@ -680,4 +791,184 @@ export async function toggleUserFavorite(
   } catch (error: unknown) {
     return { success: false, isFavorite: false, error: errorMessage(error, "Failed to toggle favorite") };
   }
+}
+
+// ── Portal Operations & Observability ───────────────────────
+export type Announcement = {
+  id: number; title: string; message: string; severity: "info" | "warning" | "critical";
+  is_active: boolean; starts_at: number | null; ends_at: number | null; created_at: string;
+};
+
+export async function getActiveAnnouncements(): Promise<Announcement[]> {
+  await ensureDb();
+  const now = Date.now();
+  const result = await client.execute({
+    sql: `SELECT * FROM announcements WHERE is_active = 1
+          AND (starts_at IS NULL OR starts_at <= ?) AND (ends_at IS NULL OR ends_at >= ?)
+          ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, created_at DESC`,
+    args: [now, now],
+  });
+  return result.rows.map((row) => ({
+    id: Number(row.id), title: String(row.title), message: String(row.message),
+    severity: row.severity as Announcement["severity"], is_active: Boolean(row.is_active),
+    starts_at: row.starts_at == null ? null : Number(row.starts_at),
+    ends_at: row.ends_at == null ? null : Number(row.ends_at), created_at: String(row.created_at),
+  }));
+}
+
+export async function getAnnouncements(): Promise<Announcement[]> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return [];
+  const result = await client.execute("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 100");
+  return result.rows.map((row) => ({
+    id: Number(row.id), title: String(row.title), message: String(row.message),
+    severity: row.severity as Announcement["severity"], is_active: Boolean(row.is_active),
+    starts_at: row.starts_at == null ? null : Number(row.starts_at),
+    ends_at: row.ends_at == null ? null : Number(row.ends_at), created_at: String(row.created_at),
+  }));
+}
+
+export async function saveAnnouncement(data: {
+  id?: number; title: string; message: string; severity: Announcement["severity"]; isActive: boolean;
+}): Promise<{ success: boolean; error?: string }> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  const title = data.title?.trim();
+  const message = data.message?.trim();
+  if (!title || !message || title.length > 160 || message.length > 2000 || !["info", "warning", "critical"].includes(data.severity)) {
+    return { success: false, error: "Invalid announcement." };
+  }
+  const session = await readSession();
+  if (data.id) {
+    await client.execute({
+      sql: `UPDATE announcements SET title=?, message=?, severity=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      args: [title, message, data.severity, data.isActive ? 1 : 0, data.id],
+    });
+    await writeAudit("announcement.updated", "announcement", data.id, { title });
+  } else {
+    const result = await client.execute({
+      sql: `INSERT INTO announcements (title, message, severity, is_active, created_by) VALUES (?, ?, ?, ?, ?)`,
+      args: [title, message, data.severity, data.isActive ? 1 : 0, session?.userId || null],
+    });
+    await writeAudit("announcement.created", "announcement", Number(result.lastInsertRowid), { title });
+  }
+  return { success: true };
+}
+
+export async function deleteAnnouncement(id: number): Promise<{ success: boolean; error?: string }> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  if (!Number.isInteger(id) || id <= 0) return { success: false, error: "Invalid announcement." };
+  await client.execute({ sql: "DELETE FROM announcements WHERE id=?", args: [id] });
+  await writeAudit("announcement.deleted", "announcement", id);
+  return { success: true };
+}
+
+export async function recordApplicationOpen(buttonId: number): Promise<void> {
+  await ensureDb();
+  if (!Number.isInteger(buttonId) || buttonId <= 0) return;
+  const session = await readSession();
+  const buttonResult = await client.execute({ sql: "SELECT * FROM buttons WHERE id=?", args: [buttonId] });
+  if (buttonResult.rows.length === 0 || !canAccessResource(session, rowToButton(buttonResult.rows[0]))) return;
+  await client.execute({
+    sql: "INSERT INTO app_usage (user_id, button_id) VALUES (?, ?)",
+    args: [session?.userId || null, buttonId],
+  });
+}
+
+export async function getRecentlyUsedApplications(): Promise<Button[]> {
+  await ensureDb();
+  const session = await readSession();
+  if (!session?.userId) return [];
+  const result = await client.execute({
+    sql: `SELECT b.*, MAX(u.opened_at) AS last_opened FROM app_usage u
+          JOIN buttons b ON b.id=u.button_id WHERE u.user_id=?
+          GROUP BY b.id ORDER BY last_opened DESC LIMIT 6`,
+    args: [session.userId],
+  });
+  return result.rows.map(rowToButton).filter((button) => canAccessResource(session, button));
+}
+
+export async function getAuditLogs(): Promise<Array<Record<string, string | number | null>>> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return [];
+  const result = await client.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200");
+  return result.rows.map((row) => ({
+    id: Number(row.id), actor_email: row.actor_email ? String(row.actor_email) : null,
+    action: String(row.action),
+    details: row.details ? String(row.details) : null, created_at: String(row.created_at),
+  }));
+}
+
+export async function getUsageAnalytics(): Promise<{
+  totalLaunches: number; uniqueUsers: number; topApps: Array<{ name: string; launches: number }>;
+}> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return { totalLaunches: 0, uniqueUsers: 0, topApps: [] };
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const [summary, top] = await Promise.all([
+    client.execute({ sql: "SELECT COUNT(*) total, COUNT(DISTINCT user_id) users FROM app_usage WHERE opened_at >= ?", args: [since] }),
+    client.execute({ sql: `SELECT b.button_name name, COUNT(*) launches FROM app_usage u JOIN buttons b ON b.id=u.button_id
+                           WHERE u.opened_at >= ? GROUP BY b.id ORDER BY launches DESC LIMIT 10`, args: [since] }),
+  ]);
+  return {
+    totalLaunches: Number(summary.rows[0]?.total || 0), uniqueUsers: Number(summary.rows[0]?.users || 0),
+    topApps: top.rows.map((row) => ({ name: String(row.name), launches: Number(row.launches) })),
+  };
+}
+
+function isPrivateAddress(address: string): boolean {
+  if (net.isIPv4(address)) {
+    const [a, b] = address.split(".").map(Number);
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  const normalized = address.toLowerCase();
+  return normalized === "::1" || normalized === "::" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb");
+}
+
+async function safeHealthUrl(source: string): Promise<URL | null> {
+  try {
+    const url = new URL(source);
+    if (url.protocol !== "https:" || url.username || url.password || url.hostname === "localhost" || url.hostname.endsWith(".local")) return null;
+    const addresses = await dns.lookup(url.hostname, { all: true });
+    return addresses.length > 0 && addresses.every(({ address }) => !isPrivateAddress(address)) ? url : null;
+  } catch { return null; }
+}
+
+export async function refreshApplicationHealth(buttonId: number): Promise<{ success: boolean; error?: string }> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  const result = await client.execute({ sql: "SELECT * FROM buttons WHERE id=?", args: [buttonId] });
+  if (result.rows.length === 0) return { success: false, error: "Application not found." };
+  const button = rowToButton(result.rows[0]);
+  const url = button.source_type === "code" ? null : await safeHealthUrl(button.source);
+  let status = "unsupported", statusCode: number | null = null, latency: number | null = null, message = "Health checks require a public HTTPS URL.";
+  if (url) {
+    const started = Date.now();
+    try {
+      const response = await fetch(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(5000), cache: "no-store" });
+      latency = Date.now() - started; statusCode = response.status;
+      status = response.ok ? "healthy" : response.status >= 500 ? "down" : "degraded";
+      message = response.ok ? "Responding normally." : `Returned HTTP ${response.status}.`;
+    } catch { latency = Date.now() - started; status = "down"; message = "Request failed or timed out."; }
+  }
+  await client.execute({
+    sql: `INSERT INTO app_health (button_id,status,status_code,latency_ms,message,checked_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
+          ON CONFLICT(button_id) DO UPDATE SET status=excluded.status,status_code=excluded.status_code,
+          latency_ms=excluded.latency_ms,message=excluded.message,checked_at=CURRENT_TIMESTAMP`,
+    args: [buttonId, status, statusCode, latency, message],
+  });
+  await writeAudit("health.checked", "button", buttonId, { status });
+  return { success: true };
+}
+
+export async function getApplicationHealth(): Promise<Array<Record<string, string | number | null>>> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return [];
+  const result = await client.execute(`SELECT b.id, b.button_name, b.source_type, h.status, h.status_code, h.latency_ms, h.message, h.checked_at
+    FROM buttons b LEFT JOIN app_health h ON h.button_id=b.id ORDER BY b."order", b.id`);
+  return result.rows.map((row) => ({ id: Number(row.id), button_name: String(row.button_name), source_type: String(row.source_type),
+    status: row.status ? String(row.status) : "unknown", status_code: row.status_code == null ? null : Number(row.status_code),
+    latency_ms: row.latency_ms == null ? null : Number(row.latency_ms), message: row.message ? String(row.message) : null,
+    checked_at: row.checked_at ? String(row.checked_at) : null }));
 }

@@ -103,6 +103,26 @@ export async function initDb() {
       )
     `);
 
+    // App-specific authentication throttling state. Keys are HMAC hashes so
+    // account identifiers and client IP addresses are never stored in plaintext.
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS auth_rate_limits (
+        key               TEXT PRIMARY KEY,
+        attempt_count     INTEGER NOT NULL DEFAULT 0,
+        window_expires_at INTEGER NOT NULL,
+        locked_until      INTEGER NOT NULL DEFAULT 0,
+        updated_at        INTEGER NOT NULL
+      )
+    `);
+    await client.execute(`
+      CREATE INDEX IF NOT EXISTS idx_auth_rate_limits_updated_at
+      ON auth_rate_limits(updated_at)
+    `);
+    await client.execute({
+      sql: "DELETE FROM auth_rate_limits WHERE updated_at < ?",
+      args: [Date.now() - 30 * 24 * 60 * 60 * 1000],
+    });
+
     // 3. Buttons Table (GAT App Data DB)
     await client.execute(`
       CREATE TABLE IF NOT EXISTS buttons (
@@ -125,6 +145,58 @@ export async function initDb() {
         user_id INTEGER NOT NULL,
         button_id INTEGER NOT NULL,
         PRIMARY KEY (user_id, button_id),
+        FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
+      )
+    `);
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_user_id INTEGER,
+        actor_email TEXT,
+        action TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id TEXT,
+        details TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS app_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        button_id INTEGER NOT NULL,
+        opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
+      )
+    `);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_app_usage_user_time ON app_usage(user_id, opened_at DESC)`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_app_usage_button_time ON app_usage(button_id, opened_at DESC)`);
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS announcements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info','warning','critical')),
+        is_active INTEGER NOT NULL DEFAULT 1,
+        starts_at INTEGER,
+        ends_at INTEGER,
+        created_by INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS app_health (
+        button_id INTEGER PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('healthy','degraded','down','unknown','unsupported')),
+        status_code INTEGER,
+        latency_ms INTEGER,
+        message TEXT,
+        checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
       )
     `);

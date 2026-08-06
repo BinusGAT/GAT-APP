@@ -19,10 +19,15 @@ import {
   GraduationCap,
   ChalkboardTeacher,
   Lightning,
+  ClipboardText,
+  Pulse,
+  Megaphone,
+  ChartBar,
 } from "@phosphor-icons/react";
 import { Button, Role, UserWithRole } from "@/lib/db";
 import {
   verifyPasscode,
+  exitSuperadmin,
   isSuperadminSessionValid,
   updateSuperadminPasscode,
   getButtons,
@@ -40,6 +45,7 @@ import {
 } from "@/lib/actions";
 import { getIconComponent } from "./Sidebar";
 import { parseAllowedRoles, ROLE_OPTIONS, serializeAllowedRoles } from "@/lib/permissions";
+import SettingsOperations, { OperationsView } from "./SettingsOperations";
 
 // ── Icon list for the picker ──────────────────────────────────
 const AVAILABLE_ICONS = [
@@ -163,7 +169,7 @@ function AdminPanel({
   const [fAllowedRoles, setFAllowedRoles] = useState<string[]>(["all"]);
 
   // Tab switcher state
-  const [activeTab, setActiveTab] = useState<"apps" | "home" | "users" | "superadmin">("apps");
+  const [activeTab, setActiveTab] = useState<"apps" | "home" | "users" | "superadmin" | OperationsView>("apps");
 
   // Superadmin unlock state for sensitive tabs
   const [isSuperadminUnlocked, setIsSuperadminUnlocked] = useState(false);
@@ -187,6 +193,18 @@ function AdminPanel({
       setActiveTab("users");
     } else {
       setSuperAuthError(res.error || "Invalid Superadmin Passcode.");
+    }
+  };
+
+  const handleSuperadminExit = async () => {
+    setSuperAuthError("");
+    const res = await exitSuperadmin();
+    if (res.success) {
+      setIsSuperadminUnlocked(false);
+      setSuperPasscode("");
+      setActiveTab("apps");
+    } else {
+      setSuperAuthError(res.error || "Unable to exit Superadmin mode.");
     }
   };
 
@@ -387,14 +405,14 @@ function AdminPanel({
         </div>
 
         {/* Tab Switcher */}
-        <div className="settings-tabs" style={{ marginBottom: "20px" }}>
+        <nav className="settings-tabs settings-tabs-primary" aria-label="Settings sections">
           <button
             type="button"
             className={`settings-tab-btn ${activeTab === "apps" ? "active" : ""}`}
             onClick={() => setActiveTab("apps")}
           >
             <AppWindow size={16} weight="bold" />
-            Sidebar Buttons
+            Apps
           </button>
           <button
             type="button"
@@ -402,28 +420,35 @@ function AdminPanel({
             onClick={() => setActiveTab("home")}
           >
             <House size={16} weight="bold" />
-            Home Page Content
+            Home
           </button>
-          {!isSuperadminUnlocked ? (
-            <button
-              type="button"
-              className={`settings-tab-btn ${activeTab === "superadmin" ? "active" : ""}`}
-              onClick={() => setActiveTab("superadmin")}
-            >
-              <Shield size={16} weight="bold" />
-              Superadmin
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={`settings-tab-btn ${activeTab === "users" ? "active" : ""}`}
-              onClick={() => setActiveTab("users")}
-            >
-              <User size={16} weight="bold" />
-              Users & Roles (Superadmin)
-            </button>
-          )}
-        </div>
+          <button type="button" className={`settings-tab-btn ${(["audit", "health", "announcements", "analytics"] as string[]).includes(activeTab) ? "active" : ""}`} onClick={() => setActiveTab("health")}>
+            <Pulse size={16} weight="bold" />Operations
+          </button>
+          <button type="button" className={`settings-tab-btn ${activeTab === "superadmin" || activeTab === "users" ? "active" : ""}`} onClick={() => setActiveTab(isSuperadminUnlocked ? "users" : "superadmin")}>
+            <Shield size={16} weight="bold" />Security
+          </button>
+        </nav>
+
+        {(["audit", "health", "announcements", "analytics"] as string[]).includes(activeTab) && (
+          <nav className="settings-tabs settings-subnav" aria-label="Operations tools">
+            <button type="button" className={`settings-tab-btn ${activeTab === "health" ? "active" : ""}`} onClick={() => setActiveTab("health")}><Pulse size={15}/>Health</button>
+            <button type="button" className={`settings-tab-btn ${activeTab === "announcements" ? "active" : ""}`} onClick={() => setActiveTab("announcements")}><Megaphone size={15}/>Announcements</button>
+            <button type="button" className={`settings-tab-btn ${activeTab === "analytics" ? "active" : ""}`} onClick={() => setActiveTab("analytics")}><ChartBar size={15}/>Analytics</button>
+            <button type="button" className={`settings-tab-btn ${activeTab === "audit" ? "active" : ""}`} onClick={() => setActiveTab("audit")}><ClipboardText size={15}/>Audit</button>
+          </nav>
+        )}
+
+        {activeTab === "users" && isSuperadminUnlocked && (
+          <div className="security-toolbar">
+            <span><User size={15}/>Superadmin access is active</span>
+            <button type="button" className="btn-secondary" onClick={handleSuperadminExit}>Exit Superadmin</button>
+          </div>
+        )}
+
+        {(["audit", "health", "announcements", "analytics"] as string[]).includes(activeTab) && (
+          <SettingsOperations view={activeTab as OperationsView} />
+        )}
 
         {activeTab === "apps" && (
           /* Button list */

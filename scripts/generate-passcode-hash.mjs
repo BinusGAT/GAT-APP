@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 
 const passcode = process.argv[2];
-if (!passcode || passcode.length < 5) {
-  console.error('Usage: npm run generate-passcode-hash -- "a passcode of at least 5 characters"');
+if (!passcode || passcode.length < 12) {
+  console.error('Usage: npm run generate-passcode-hash -- "a passcode of at least 12 characters"');
   process.exitCode = 1;
 } else {
   const salt = crypto.randomBytes(16);

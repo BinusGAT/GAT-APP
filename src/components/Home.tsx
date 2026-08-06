@@ -3,8 +3,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { MagnifyingGlass, Star } from "@phosphor-icons/react";
-import { getHomeSettings, getButtons, getUserFavorites, toggleUserFavorite } from "@/lib/actions";
+import { MagnifyingGlass, Star, Megaphone } from "@phosphor-icons/react";
+import { getHomeSettings, getButtons, getUserFavorites, toggleUserFavorite, getActiveAnnouncements, getRecentlyUsedApplications, recordApplicationOpen, Announcement } from "@/lib/actions";
 import { Button } from "@/lib/db";
 import { getIconComponent } from "./Sidebar";
 
@@ -39,6 +39,8 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [favoriteIds, setFavoriteIds] = useState<number[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [recentButtons, setRecentButtons] = useState<Button[]>([]);
   const [loading, setLoading] = useState(() => {
     if (propsButtons && propsButtons.length > 0) return false;
     return !isHomeDataLoaded;
@@ -56,6 +58,12 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
       }
     }
     loadFavs();
+  }, [currentUser]);
+
+  useEffect(() => {
+    void getActiveAnnouncements().then(setAnnouncements).catch(() => setAnnouncements([]));
+    void (currentUser ? getRecentlyUsedApplications() : Promise.resolve([]))
+      .then(setRecentButtons).catch(() => setRecentButtons([]));
   }, [currentUser]);
 
   const handleToggleStar = async (e: React.MouseEvent, buttonId: number) => {
@@ -126,10 +134,23 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
     );
   }
 
+  const announcementPanel = announcements.length > 0 ? (
+    <div className="portal-announcements" aria-label="Announcements">
+      {announcements.map((announcement) => (
+        <div key={announcement.id} className={`portal-announcement ${announcement.severity}`}>
+          <Megaphone size={18} weight="bold" />
+          <div><strong>{announcement.title}</strong><p>{announcement.message}</p></div>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   // ── Embed (iframe) mode ──
   if (contentType === "embed" && contentValue.trim()) {
     return (
-      <div className="iframe-container" style={{ height: "100%", width: "100%" }}>
+      <div className="portal-custom-home">
+        {announcementPanel}
+        <div className="iframe-container" style={{ flex: 1, width: "100%" }}>
         <iframe
           className="app-iframe"
           src={contentValue}
@@ -137,6 +158,7 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
           sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
           style={{ width: "100%", height: "100%", border: "none" }}
         />
+        </div>
       </div>
     );
   }
@@ -144,12 +166,15 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
   // ── Custom HTML mode ──
   if (contentType === "html" && contentValue.trim()) {
     return (
+      <div className="portal-custom-home">
+        {announcementPanel}
       <div
         ref={containerRef}
         className="dashboard"
-        style={{ padding: "32px", overflowY: "auto", height: "100%" }}
+        style={{ padding: "32px", overflowY: "auto", flex: 1 }}
         dangerouslySetInnerHTML={{ __html: contentValue }}
       />
+      </div>
     );
   }
 
@@ -189,6 +214,8 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
   };
 
   const handleAppClick = (btn: Button) => {
+    void recordApplicationOpen(btn.id);
+    setRecentButtons((previous) => [btn, ...previous.filter((item) => item.id !== btn.id)].slice(0, 6));
     if (btn.source_type === "link") {
       window.open(btn.source, "_blank", "noopener,noreferrer");
     } else {
@@ -236,6 +263,22 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
 
       {/* ── Portal App Cards Grid ── */}
       <div className="portal-content-area">
+        {!searchQuery.trim() && selectedCategory === "all" && announcementPanel}
+
+        {recentButtons.length > 0 && !searchQuery.trim() && selectedCategory === "all" && (
+          <div style={{ marginBottom: 32 }}>
+            <div className="portal-section-title"><span>Recently used</span></div>
+            <div className="portal-recent-list">
+              {recentButtons.map((btn) => (
+                <button key={`recent-${btn.id}`} type="button" className="portal-recent-item" onClick={() => handleAppClick(btn)}>
+                  <span className="portal-recent-icon">{getIconComponent(btn.icon, 22)}</span>
+                  <span>{btn.button_name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Top Pinned / Favorites Section */}
         {favoriteButtons.length > 0 && !searchQuery.trim() && selectedCategory === "all" && (
           <div style={{ marginBottom: 32 }}>
