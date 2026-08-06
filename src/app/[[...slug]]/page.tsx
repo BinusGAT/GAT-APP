@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import Home from "@/components/Home";
 import MainContent from "@/components/MainContent";
+import AppState from "@/components/AppState";
 import { Button } from "@/lib/db";
 import { getButtons, getCurrentUser, verifyUserCredentials, logout, switchActiveRole, recordApplicationOpen } from "@/lib/actions";
 import { formatRoleName, isAdministratorRole } from "@/lib/permissions";
@@ -99,21 +100,18 @@ export default function GatAppPage({ params }: PageProps) {
     isAdministratorRole(currentUser.activeRole)
   );
 
-  // Protect /settings route if not admin
-  useEffect(() => {
-    if (sessionLoaded && currentSlug === "settings" && !isAdmin && !loading) {
-      router.replace("/home");
-    }
-  }, [sessionLoaded, currentSlug, isAdmin, loading, router]);
-
   let activeView:
     | { kind: "home" }
     | { kind: "admin" }
-    | { kind: "content"; button: Button } = { kind: "home" };
+    | { kind: "content"; button: Button }
+    | { kind: "denied" }
+    | { kind: "not-found" } = { kind: "home" };
 
   if (currentSlug === "settings" && (isAdmin || !sessionLoaded)) {
     activeView = { kind: "admin" };
-  } else if (currentSlug === "home" || !currentSlug || (currentSlug === "settings" && !isAdmin && sessionLoaded)) {
+  } else if (currentSlug === "settings" && !isAdmin && sessionLoaded) {
+    activeView = { kind: "denied" };
+  } else if (currentSlug === "home" || !currentSlug) {
     activeView = { kind: "home" };
   } else if (currentSlug) {
     const matchingButton = buttons.find(
@@ -121,6 +119,8 @@ export default function GatAppPage({ params }: PageProps) {
     );
     if (matchingButton) {
       activeView = { kind: "content", button: matchingButton };
+    } else if (!loading) {
+      activeView = { kind: "not-found" };
     }
   }
 
@@ -220,6 +220,8 @@ export default function GatAppPage({ params }: PageProps) {
   if (activeView.kind === "admin") headerTitle = "SYSTEM SETTINGS";
   else if (activeView.kind === "content")
     headerTitle = activeView.button.button_name.toUpperCase();
+  else if (activeView.kind === "denied") headerTitle = "ACCESS RESTRICTED";
+  else if (activeView.kind === "not-found") headerTitle = "PAGE NOT FOUND";
 
   const activeButtonId = activeView.kind === "content" ? activeView.button.id : null;
 
@@ -357,6 +359,10 @@ export default function GatAppPage({ params }: PageProps) {
                   onRefresh={fetchButtons}
                 />
               )}
+
+              {activeView.kind === "denied" && <AppState variant="denied" />}
+
+              {activeView.kind === "not-found" && <AppState variant="not-found" />}
             </>
           )}
         </main>

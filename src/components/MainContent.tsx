@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import {
-  ArrowSquareOut,
   Plus,
   CaretUp,
   CaretDown,
@@ -100,30 +99,6 @@ function ContentRenderer({
           onLoad={() => setLoading(false)}
           sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
         />
-        {/* Fallback bar */}
-        <div className="iframe-fallback-bar">
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            Trouble loading?
-          </span>
-          <a
-            href={button.source}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary"
-            style={{
-              padding: "4px 12px",
-              fontSize: 12,
-              textDecoration: "none",
-              borderRadius: "var(--radius-full)",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-            }}
-          >
-            <ArrowSquareOut size={12} weight="bold" />
-            Open in New Tab
-          </a>
-        </div>
       </div>
     );
   }
@@ -1361,7 +1336,7 @@ function UserManagementTab() {
                   id="user-name"
                   type="text"
                   className="form-input"
-                  placeholder="e.g. Kelvin"
+                  placeholder="Full name"
                   value={uName}
                   onChange={(e) => setUName(e.target.value)}
                   required
@@ -1374,7 +1349,7 @@ function UserManagementTab() {
                   id="user-email"
                   type="email"
                   className="form-input"
-                  placeholder="kelvin@binus.ac.id"
+                  placeholder="user@domain.com"
                   value={uEmail}
                   onChange={(e) => setUEmail(e.target.value)}
                   required
@@ -1387,7 +1362,7 @@ function UserManagementTab() {
                   id="user-nim"
                   type="text"
                   className="form-input"
-                  placeholder="e.g. 2602123456"
+                  placeholder="Student ID"
                   value={uNim}
                   onChange={(e) => setUNim(e.target.value)}
                 />
