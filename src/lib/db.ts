@@ -161,6 +161,7 @@ export async function initDb() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)`);
 
     await client.execute(`
       CREATE TABLE IF NOT EXISTS app_usage (
@@ -173,6 +174,14 @@ export async function initDb() {
     `);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_app_usage_user_time ON app_usage(user_id, opened_at DESC)`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_app_usage_button_time ON app_usage(button_id, opened_at DESC)`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_app_usage_opened_at ON app_usage(opened_at)`);
+
+    // Retain detailed operational records for 30 days. These indexed deletes
+    // are safe to repeat on cold starts and keep the app database bounded.
+    await client.batch([
+      "DELETE FROM audit_logs WHERE created_at < datetime('now', '-30 days')",
+      "DELETE FROM app_usage WHERE opened_at < datetime('now', '-30 days')",
+    ], "write");
 
     await client.execute(`
       CREATE TABLE IF NOT EXISTS announcements (

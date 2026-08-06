@@ -1950,6 +1950,8 @@ body {
 .ops-icon-btn:hover { color: #dc2626; border-color: #dc262666; }
 .ops-form { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); }
 .ops-form textarea { min-height: 90px; resize: vertical; }
+.ops-schedule-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ops-schedule-fields label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
 .ops-form-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .ops-form-actions select { width: 160px; }
 .ops-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
@@ -1963,7 +1965,7 @@ body {
 .ops-rank-row > div { height: 6px; overflow: hidden; border-radius: 999px; background: var(--bg-secondary); }
 .ops-rank-row i { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
 .ops-rank-row b { text-align: right; }
-@media (max-width: 720px) { .ops-heading, .ops-list-row { align-items: stretch; flex-direction: column; } .ops-filter-bar, .ops-pagination { align-items: stretch; flex-direction: column; } .ops-filter-bar .form-input { max-width: none; } .ops-pagination > div { justify-content: flex-end; } .ops-metrics { grid-template-columns: 1fr; } .ops-metrics > div { border-right: 0; border-bottom: 1px solid var(--border-color); } .ops-rank-row { grid-template-columns: 20px 1fr 36px; } .ops-rank-row > div { display: none; } }
+@media (max-width: 720px) { .ops-heading, .ops-list-row { align-items: stretch; flex-direction: column; } .ops-filter-bar, .ops-pagination { align-items: stretch; flex-direction: column; } .ops-filter-bar .form-input { max-width: none; } .ops-pagination > div { justify-content: flex-end; } .ops-schedule-fields { grid-template-columns: 1fr; } .ops-metrics { grid-template-columns: 1fr; } .ops-metrics > div { border-right: 0; border-bottom: 1px solid var(--border-color); } .ops-rank-row { grid-template-columns: 20px 1fr 36px; } .ops-rank-row > div { display: none; } }
 
 /* ── Sidebar Role Box (Theme Matching) ── */
 .sidebar-role-box {

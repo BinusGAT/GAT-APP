@@ -2,6 +2,7 @@
 
 import dns from "node:dns/promises";
 import net from "node:net";
+import crypto from "node:crypto";
 import { client, authClient, initDb, Button, UserWithRole, Role } from "./db";
 import { cookies } from "next/headers";
 import {
@@ -830,6 +831,7 @@ export async function getAnnouncements(): Promise<Announcement[]> {
 
 export async function saveAnnouncement(data: {
   id?: number; title: string; message: string; severity: Announcement["severity"]; isActive: boolean;
+  startsAt?: number | null; endsAt?: number | null;
 }): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
   if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
@@ -838,17 +840,20 @@ export async function saveAnnouncement(data: {
   if (!title || !message || title.length > 160 || message.length > 2000 || !["info", "warning", "critical"].includes(data.severity)) {
     return { success: false, error: "Invalid announcement." };
   }
+  const startsAt = data.startsAt && Number.isFinite(data.startsAt) ? data.startsAt : null;
+  const endsAt = data.endsAt && Number.isFinite(data.endsAt) ? data.endsAt : null;
+  if (startsAt && endsAt && endsAt <= startsAt) return { success: false, error: "End time must be after start time." };
   const session = await readSession();
   if (data.id) {
     await client.execute({
-      sql: `UPDATE announcements SET title=?, message=?, severity=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-      args: [title, message, data.severity, data.isActive ? 1 : 0, data.id],
+      sql: `UPDATE announcements SET title=?, message=?, severity=?, is_active=?, starts_at=?, ends_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      args: [title, message, data.severity, data.isActive ? 1 : 0, startsAt, endsAt, data.id],
     });
     await writeAudit("announcement.updated", "announcement", data.id, { title });
   } else {
     const result = await client.execute({
-      sql: `INSERT INTO announcements (title, message, severity, is_active, created_by) VALUES (?, ?, ?, ?, ?)`,
-      args: [title, message, data.severity, data.isActive ? 1 : 0, session?.userId || null],
+      sql: `INSERT INTO announcements (title, message, severity, is_active, starts_at, ends_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [title, message, data.severity, data.isActive ? 1 : 0, startsAt, endsAt, session?.userId || null],
     });
     await writeAudit("announcement.created", "announcement", Number(result.lastInsertRowid), { title });
   }
@@ -935,9 +940,7 @@ async function safeHealthUrl(source: string): Promise<URL | null> {
   } catch { return null; }
 }
 
-export async function refreshApplicationHealth(buttonId: number): Promise<{ success: boolean; error?: string }> {
-  await ensureDb();
-  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+async function performApplicationHealthCheck(buttonId: number): Promise<{ success: boolean; error?: string }> {
   const result = await client.execute({ sql: "SELECT * FROM buttons WHERE id=?", args: [buttonId] });
   if (result.rows.length === 0) return { success: false, error: "Application not found." };
   const button = rowToButton(result.rows[0]);
@@ -960,6 +963,35 @@ export async function refreshApplicationHealth(buttonId: number): Promise<{ succ
   });
   await writeAudit("health.checked", "button", buttonId, { status });
   return { success: true };
+}
+
+export async function refreshApplicationHealth(buttonId: number): Promise<{ success: boolean; error?: string }> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  return performApplicationHealthCheck(buttonId);
+}
+
+export async function refreshAllApplicationHealth(): Promise<{ success: boolean; checked: number; error?: string }> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return { success: false, checked: 0, error: "Unauthorized" };
+  const result = await client.execute("SELECT id FROM buttons ORDER BY id");
+  for (const row of result.rows) await performApplicationHealthCheck(Number(row.id));
+  return { success: true, checked: result.rows.length };
+}
+
+export async function runScheduledHealthChecks(secret: string): Promise<{ success: boolean; checked: number; error?: string }> {
+  const configured = process.env.CRON_SECRET?.trim() || "";
+  const supplied = secret?.trim() || "";
+  const configuredBytes = Buffer.from(configured);
+  const suppliedBytes = Buffer.from(supplied);
+  if (configuredBytes.length < 32 || suppliedBytes.length !== configuredBytes.length ||
+      !crypto.timingSafeEqual(suppliedBytes, configuredBytes)) {
+    return { success: false, checked: 0, error: "Unauthorized" };
+  }
+  await ensureDb();
+  const result = await client.execute("SELECT id FROM buttons ORDER BY id");
+  for (const row of result.rows) await performApplicationHealthCheck(Number(row.id));
+  return { success: true, checked: result.rows.length };
 }
 
 export async function getApplicationHealth(): Promise<Array<Record<string, string | number | null>>> {

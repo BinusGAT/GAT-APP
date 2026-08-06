@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowClockwise, CheckCircle, Plus, Trash, Warning, XCircle } from "@phosphor-icons/react";
+import { ArrowClockwise, CheckCircle, PencilSimple, Plus, Trash, Warning, XCircle } from "@phosphor-icons/react";
 import {
   Announcement,
   deleteAnnouncement,
@@ -9,6 +9,7 @@ import {
   getApplicationHealth,
   getAuditLogs,
   getUsageAnalytics,
+  refreshAllApplicationHealth,
   refreshApplicationHealth,
   saveAnnouncement,
 } from "@/lib/actions";
@@ -25,15 +26,21 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [analytics, setAnalytics] = useState<{ totalLaunches: number; uniqueUsers: number; topApps: Array<{ name: string; launches: number }> }>({ totalLaunches: 0, uniqueUsers: 0, topApps: [] });
   const [checkingId, setCheckingId] = useState<number | null>(null);
+  const [checkingAll, setCheckingAll] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [severity, setSeverity] = useState<Announcement["severity"]>("info");
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<number | undefined>();
+  const [startsAt, setStartsAt] = useState("");
+  const [endsAt, setEndsAt] = useState("");
   const [auditFilter, setAuditFilter] = useState("");
   const [auditPage, setAuditPage] = useState(1);
+  const [displayNow, setDisplayNow] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
+    setDisplayNow(Date.now());
     try {
       if (view === "audit") { setLogs(await getAuditLogs()); setAuditPage(1); }
       if (view === "health") setHealth(await getApplicationHealth());
@@ -57,9 +64,28 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
 
   const createAnnouncement = async (event: React.FormEvent) => {
     event.preventDefault(); setError("");
-    const result = await saveAnnouncement({ title, message, severity, isActive: true });
+    const result = await saveAnnouncement({ id: editingAnnouncementId, title, message, severity, isActive: true,
+      startsAt: startsAt ? new Date(startsAt).getTime() : null, endsAt: endsAt ? new Date(endsAt).getTime() : null });
     if (!result.success) { setError(result.error || "Unable to publish announcement."); return; }
-    setTitle(""); setMessage(""); setSeverity("info"); setFormOpen(false); await load();
+    setTitle(""); setMessage(""); setSeverity("info"); setStartsAt(""); setEndsAt(""); setEditingAnnouncementId(undefined); setFormOpen(false); await load();
+  };
+
+  const localDateTimeValue = (timestamp: number | null) => {
+    if (!timestamp) return "";
+    const date = new Date(timestamp);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+
+  const editAnnouncement = (item: Announcement) => {
+    setEditingAnnouncementId(item.id); setTitle(item.title); setMessage(item.message); setSeverity(item.severity);
+    setStartsAt(localDateTimeValue(item.starts_at)); setEndsAt(localDateTimeValue(item.ends_at)); setFormOpen(true);
+  };
+
+  const checkAllHealth = async () => {
+    setCheckingAll(true); setError("");
+    const result = await refreshAllApplicationHealth();
+    if (!result.success) setError(result.error || "Scheduled health check failed.");
+    await load(); setCheckingAll(false);
   };
 
   const filteredLogs = useMemo(() => {
@@ -88,7 +114,7 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
       </>}
 
       {view === "health" && <>
-        <div className="ops-heading"><div><h2>Application health</h2><p>On-demand checks for public HTTPS application endpoints.</p></div></div>
+        <div className="ops-heading"><div><h2>Application health</h2><p>Scheduled endpoint: <code>/api/cron/health</code>. Configure an hourly bearer-authenticated request.</p></div><button className="btn-primary" disabled={checkingAll} onClick={() => void checkAllHealth()}><ArrowClockwise size={15}/>{checkingAll ? "Checking all…" : "Run all now"}</button></div>
         <div className="ops-list">{health.map((app) => {
           const status = String(app.status); const Icon = status === "healthy" ? CheckCircle : status === "down" ? XCircle : Warning;
           return <div className="ops-list-row" key={String(app.id)}><Icon size={21} weight="fill" className={`health-${status}`} /><div className="ops-grow"><strong>{String(app.button_name)}</strong><span>{String(app.message || "Not checked yet")}</span></div><div className="ops-health-meta"><span>{app.latency_ms == null ? "—" : `${app.latency_ms} ms`}</span><span className={`health-badge ${status}`}>{status}</span></div><button className="btn-secondary" disabled={checkingId === Number(app.id)} onClick={() => void checkHealth(Number(app.id))}>{checkingId === Number(app.id) ? "Checking…" : "Check"}</button></div>;
@@ -96,9 +122,9 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
       </>}
 
       {view === "announcements" && <>
-        <div className="ops-heading"><div><h2>Announcements</h2><p>Publish operational notices on the application portal.</p></div><button className="btn-primary" onClick={() => setFormOpen(!formOpen)}><Plus size={15} />New announcement</button></div>
-        {formOpen && <form className="ops-form" onSubmit={createAnnouncement}><input className="form-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Announcement title" required maxLength={160}/><textarea className="form-input" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Message" required maxLength={2000}/><div className="ops-form-actions"><select className="form-input" value={severity} onChange={(e) => setSeverity(e.target.value as Announcement["severity"])}><option value="info">Information</option><option value="warning">Warning</option><option value="critical">Critical</option></select><button className="btn-primary" type="submit">Publish</button></div></form>}
-        <div className="ops-list">{announcements.map((item) => <div className="ops-list-row" key={item.id}><div className="ops-grow"><div><span className={`health-badge ${item.severity}`}>{item.severity}</span> <strong>{item.title}</strong></div><span>{item.message}</span></div><button className="ops-icon-btn" title="Delete announcement" onClick={async () => { await deleteAnnouncement(item.id); await load(); }}><Trash size={17}/></button></div>)}{announcements.length === 0 && <div className="ops-empty">No announcements have been published.</div>}</div>
+        <div className="ops-heading"><div><h2>Announcements</h2><p>Publish immediately or schedule a start and end time.</p></div><button className="btn-primary" onClick={() => { setEditingAnnouncementId(undefined); setTitle(""); setMessage(""); setStartsAt(""); setEndsAt(""); setFormOpen(!formOpen); }}><Plus size={15} />New announcement</button></div>
+        {formOpen && <form className="ops-form" onSubmit={createAnnouncement}><input className="form-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Announcement title" required maxLength={160}/><textarea className="form-input" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Message" required maxLength={2000}/><div className="ops-schedule-fields"><label>Starts at <input className="form-input" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)}/></label><label>Ends at <input className="form-input" type="datetime-local" value={endsAt} min={startsAt} onChange={(e) => setEndsAt(e.target.value)}/></label></div><div className="ops-form-actions"><select className="form-input" value={severity} onChange={(e) => setSeverity(e.target.value as Announcement["severity"])}><option value="info">Information</option><option value="warning">Warning</option><option value="critical">Critical</option></select><button className="btn-primary" type="submit">{editingAnnouncementId ? "Save changes" : startsAt ? "Schedule" : "Publish"}</button></div></form>}
+        <div className="ops-list">{announcements.map((item) => { const schedule = item.starts_at && item.starts_at > displayNow ? `Scheduled ${new Date(item.starts_at).toLocaleString()}` : item.ends_at && item.ends_at < displayNow ? "Expired" : item.ends_at ? `Active until ${new Date(item.ends_at).toLocaleString()}` : "Active"; return <div className="ops-list-row" key={item.id}><div className="ops-grow"><div><span className={`health-badge ${item.severity}`}>{item.severity}</span> <strong>{item.title}</strong></div><span>{item.message}</span><span>{schedule}</span></div><button className="ops-icon-btn" title="Edit announcement" onClick={() => editAnnouncement(item)}><PencilSimple size={17}/></button><button className="ops-icon-btn" title="Delete announcement" onClick={async () => { await deleteAnnouncement(item.id); await load(); }}><Trash size={17}/></button></div>; })}{announcements.length === 0 && <div className="ops-empty">No announcements have been published.</div>}</div>
       </>}
 
       {view === "analytics" && <>
