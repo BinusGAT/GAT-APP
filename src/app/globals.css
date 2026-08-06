@@ -1912,10 +1912,6 @@ body {
 .portal-announcement.critical { border-left-color: #dc2626; }
 .portal-announcement strong { display: block; font-size: 13px; }
 .portal-announcement p { margin: 3px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
-.portal-recent-list { display: flex; gap: 8px; flex-wrap: wrap; }
-.portal-recent-item { display: inline-flex; align-items: center; gap: 9px; padding: 9px 13px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
-.portal-recent-item:hover { border-color: var(--primary); color: var(--primary); }
-.portal-recent-icon { display: inline-flex; }
 
 .ops-panel { display: grid; gap: 18px; }
 .ops-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border-color); }
@@ -1929,6 +1925,11 @@ body {
 .ops-table th, .ops-table td { padding: 11px 13px; text-align: left; border-bottom: 1px solid var(--border-color); }
 .ops-table th { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; background: var(--bg-secondary); }
 .ops-table code { font-size: 11px; color: var(--primary); }
+.ops-audit-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ops-audit-expand { display: inline-flex; align-items: center; gap: 3px; border: 0; background: transparent; color: var(--text-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.ops-audit-expand:hover { color: var(--primary); }
+.ops-table .ops-audit-detail-row td { padding: 0; background: var(--bg-secondary); }
+.ops-audit-details { display: grid; gap: 5px; padding: 11px 13px 11px 28px; color: var(--text-secondary); border-left: 2px solid var(--primary); }
 .ops-filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .ops-filter-bar .form-input { max-width: 360px; }
 .ops-filter-bar > span, .ops-pagination > span { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
@@ -1952,6 +1953,14 @@ body {
 .ops-form textarea { min-height: 90px; resize: vertical; }
 .ops-schedule-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .ops-schedule-fields label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.ops-audience { margin: 0; padding: 0; border: 0; }
+.ops-audience legend { margin-bottom: 7px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.ops-audience > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.ops-audience label { position: relative; cursor: pointer; }
+.ops-audience input { position: absolute; opacity: 0; pointer-events: none; }
+.ops-audience span { display: inline-flex; padding: 7px 10px; border: 1px solid var(--border-color); border-radius: 7px; color: var(--text-secondary); font-size: 11px; }
+.ops-audience input:checked + span { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 9%, transparent); color: var(--primary); }
+.ops-audience input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
 .ops-form-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .ops-form-actions select { width: 160px; }
 .ops-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }

@@ -23,6 +23,8 @@ import {
   isAdministratorRole,
   normalizeRole,
   normalizeRoles,
+  ROLE_OPTIONS,
+  serializeAllowedRoles,
 } from "./permissions";
 import {
   LOGIN_ACCOUNT_POLICY,
@@ -63,6 +65,21 @@ async function readSession(): Promise<SessionPayload | null> {
   }
 }
 
+const SENSITIVE_AUDIT_KEY = /pass(word|code)?|secret|token|cookie|authorization|jwt|nim/i;
+
+function sanitizeAuditDetails(value: unknown, depth = 0): unknown {
+  if (depth > 3) return "[truncated]";
+  if (value == null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") return value.slice(0, 300);
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeAuditDetails(item, depth + 1));
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 30).map(([key, item]) => [
+      key.slice(0, 80), SENSITIVE_AUDIT_KEY.test(key) ? "[redacted]" : sanitizeAuditDetails(item, depth + 1),
+    ]));
+  }
+  return String(value).slice(0, 300);
+}
+
 async function writeAudit(
   action: string,
   targetType: string,
@@ -81,7 +98,7 @@ async function writeAudit(
         action,
         targetType,
         targetId === undefined ? null : String(targetId),
-        details ? JSON.stringify(details) : null,
+        details ? JSON.stringify(sanitizeAuditDetails(details)) : null,
       ],
     });
   } catch (error) {
@@ -449,6 +466,21 @@ export async function updateUser(id: number, data: { email: string; nim: string;
     return { success: false, error: "Invalid user data." };
   }
   try {
+    const previousResult = await authClient.execute({
+      sql: `SELECT u.email, u.name, GROUP_CONCAT(r.name) AS role_names
+            FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id LEFT JOIN roles r ON r.id=ur.role_id
+            WHERE u.id=? GROUP BY u.id`,
+      args: [id],
+    });
+    if (previousResult.rows.length === 0) return { success: false, error: "User not found." };
+    const previous = previousResult.rows[0];
+    const targetRoleIds = data.role_ids.length > 0 ? data.role_ids : [2];
+    const roleResult = await authClient.execute({
+      sql: `SELECT name FROM roles WHERE id IN (${targetRoleIds.map(() => "?").join(",")}) ORDER BY id`,
+      args: targetRoleIds,
+    });
+    const oldRoles = String(previous.role_names || "student").split(",").map((role) => role.trim()).sort();
+    const newRoles = roleResult.rows.map((row) => String(row.name)).sort();
     await authClient.execute({
       sql: `UPDATE users SET email = ?, nim = ?, name = ? WHERE id = ?`,
       args: [data.email.trim().toLowerCase(), data.nim.trim(), data.name.trim(), id],
@@ -457,13 +489,19 @@ export async function updateUser(id: number, data: { email: string; nim: string;
       sql: `DELETE FROM user_roles WHERE user_id = ?`,
       args: [id],
     });
-    const targetRoleIds = data.role_ids && data.role_ids.length > 0 ? data.role_ids : [2];
     for (const rId of targetRoleIds) {
       await authClient.execute({
         sql: `INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)`,
         args: [id, rId],
-      });
+        });
     }
+    const changes: Array<{ field: string; from: string; to: string }> = [];
+    const nextEmail = data.email.trim().toLowerCase();
+    const nextName = data.name.trim();
+    if (String(previous.email) !== nextEmail) changes.push({ field: "Email", from: String(previous.email), to: nextEmail });
+    if (String(previous.name) !== nextName) changes.push({ field: "Name", from: String(previous.name), to: nextName });
+    if (oldRoles.join(",") !== newRoles.join(",")) changes.push({ field: "Permissions", from: oldRoles.join(", "), to: newRoles.join(", ") });
+    await writeAudit("user.updated", "user", id, { changes });
     return { success: true };
   } catch (error: unknown) {
     return { success: false, error: errorMessage(error, "Failed to update user.") };
@@ -797,11 +835,12 @@ export async function toggleUserFavorite(
 // ── Portal Operations & Observability ───────────────────────
 export type Announcement = {
   id: number; title: string; message: string; severity: "info" | "warning" | "critical";
-  is_active: boolean; starts_at: number | null; ends_at: number | null; created_at: string;
+  is_active: boolean; starts_at: number | null; ends_at: number | null; target_roles: string; created_at: string;
 };
 
 export async function getActiveAnnouncements(): Promise<Announcement[]> {
   await ensureDb();
+  const session = await readSession();
   const now = Date.now();
   const result = await client.execute({
     sql: `SELECT * FROM announcements WHERE is_active = 1
@@ -813,8 +852,8 @@ export async function getActiveAnnouncements(): Promise<Announcement[]> {
     id: Number(row.id), title: String(row.title), message: String(row.message),
     severity: row.severity as Announcement["severity"], is_active: Boolean(row.is_active),
     starts_at: row.starts_at == null ? null : Number(row.starts_at),
-    ends_at: row.ends_at == null ? null : Number(row.ends_at), created_at: String(row.created_at),
-  }));
+    ends_at: row.ends_at == null ? null : Number(row.ends_at), target_roles: String(row.target_roles || "all"), created_at: String(row.created_at),
+  })).filter((announcement) => canAccessResource(session, { allowed_roles: announcement.target_roles }));
 }
 
 export async function getAnnouncements(): Promise<Announcement[]> {
@@ -825,13 +864,13 @@ export async function getAnnouncements(): Promise<Announcement[]> {
     id: Number(row.id), title: String(row.title), message: String(row.message),
     severity: row.severity as Announcement["severity"], is_active: Boolean(row.is_active),
     starts_at: row.starts_at == null ? null : Number(row.starts_at),
-    ends_at: row.ends_at == null ? null : Number(row.ends_at), created_at: String(row.created_at),
+    ends_at: row.ends_at == null ? null : Number(row.ends_at), target_roles: String(row.target_roles || "all"), created_at: String(row.created_at),
   }));
 }
 
 export async function saveAnnouncement(data: {
   id?: number; title: string; message: string; severity: Announcement["severity"]; isActive: boolean;
-  startsAt?: number | null; endsAt?: number | null;
+  startsAt?: number | null; endsAt?: number | null; targetRoles?: string[];
 }): Promise<{ success: boolean; error?: string }> {
   await ensureDb();
   if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
@@ -843,17 +882,23 @@ export async function saveAnnouncement(data: {
   const startsAt = data.startsAt && Number.isFinite(data.startsAt) ? data.startsAt : null;
   const endsAt = data.endsAt && Number.isFinite(data.endsAt) ? data.endsAt : null;
   if (startsAt && endsAt && endsAt <= startsAt) return { success: false, error: "End time must be after start time." };
+  const requestedRoles = normalizeRoles(data.targetRoles || ["all"]);
+  const validRoles = new Set<string>(ROLE_OPTIONS.map((role) => role.id));
+  if (requestedRoles.some((role) => !validRoles.has(role))) {
+    return { success: false, error: "Invalid announcement audience." };
+  }
+  const targetRoles = serializeAllowedRoles(requestedRoles);
   const session = await readSession();
   if (data.id) {
     await client.execute({
-      sql: `UPDATE announcements SET title=?, message=?, severity=?, is_active=?, starts_at=?, ends_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-      args: [title, message, data.severity, data.isActive ? 1 : 0, startsAt, endsAt, data.id],
+      sql: `UPDATE announcements SET title=?, message=?, severity=?, is_active=?, starts_at=?, ends_at=?, target_roles=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      args: [title, message, data.severity, data.isActive ? 1 : 0, startsAt, endsAt, targetRoles, data.id],
     });
     await writeAudit("announcement.updated", "announcement", data.id, { title });
   } else {
     const result = await client.execute({
-      sql: `INSERT INTO announcements (title, message, severity, is_active, starts_at, ends_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      args: [title, message, data.severity, data.isActive ? 1 : 0, startsAt, endsAt, session?.userId || null],
+      sql: `INSERT INTO announcements (title, message, severity, is_active, starts_at, ends_at, target_roles, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [title, message, data.severity, data.isActive ? 1 : 0, startsAt, endsAt, targetRoles, session?.userId || null],
     });
     await writeAudit("announcement.created", "announcement", Number(result.lastInsertRowid), { title });
   }
@@ -881,28 +926,22 @@ export async function recordApplicationOpen(buttonId: number): Promise<void> {
   });
 }
 
-export async function getRecentlyUsedApplications(): Promise<Button[]> {
-  await ensureDb();
-  const session = await readSession();
-  if (!session?.userId) return [];
-  const result = await client.execute({
-    sql: `SELECT b.*, MAX(u.opened_at) AS last_opened FROM app_usage u
-          JOIN buttons b ON b.id=u.button_id WHERE u.user_id=?
-          GROUP BY b.id ORDER BY last_opened DESC LIMIT 6`,
-    args: [session.userId],
-  });
-  return result.rows.map(rowToButton).filter((button) => canAccessResource(session, button));
-}
-
 export async function getAuditLogs(): Promise<Array<Record<string, string | number | null>>> {
   await ensureDb();
   if (!(await requireAdministrator())) return [];
   const result = await client.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200");
-  return result.rows.map((row) => ({
+  return result.rows.map((row) => {
+    let details: string | null = null;
+    if (row.details) {
+      try { details = JSON.stringify(sanitizeAuditDetails(JSON.parse(String(row.details)))); }
+      catch { details = JSON.stringify({ summary: sanitizeAuditDetails(String(row.details)) }); }
+    }
+    return {
     id: Number(row.id), actor_email: row.actor_email ? String(row.actor_email) : null,
     action: String(row.action),
-    details: row.details ? String(row.details) : null, created_at: String(row.created_at),
-  }));
+    details, created_at: String(row.created_at),
+    };
+  });
 }
 
 export async function getUsageAnalytics(): Promise<{

@@ -192,11 +192,21 @@ export async function initDb() {
         is_active INTEGER NOT NULL DEFAULT 1,
         starts_at INTEGER,
         ends_at INTEGER,
+        target_roles TEXT NOT NULL DEFAULT 'all',
         created_by INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    try {
+      const announcementInfo = await client.execute(`PRAGMA table_info(announcements)`);
+      if (!announcementInfo.rows.some((row) => String(row.name).toLowerCase() === "target_roles")) {
+        await client.execute(`ALTER TABLE announcements ADD COLUMN target_roles TEXT NOT NULL DEFAULT 'all';`);
+      }
+    } catch (e) {
+      console.error("Migration error for announcement targeting:", e);
+    }
 
     await client.execute(`
       CREATE TABLE IF NOT EXISTS app_health (
