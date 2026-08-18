@@ -73,6 +73,18 @@ export default function GatAppPage({ params }: PageProps) {
       .finally(() => setSessionLoaded(true));
   }, []);
 
+  // Keyboard accessibility: Close modals on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isLoginModalOpen) setIsLoginModalOpen(false);
+        if (isRoleSwitchModalOpen) setIsRoleSwitchModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isLoginModalOpen, isRoleSwitchModalOpen]);
+
   const fetchButtons = useCallback(async () => {
     try {
       const data = await getButtons();
@@ -370,15 +382,16 @@ export default function GatAppPage({ params }: PageProps) {
 
       {/* ── Login Modal ── */}
       {isLoginModalOpen && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="login-dialog-title">
           <div className="modal-card" style={{ maxWidth: 420, padding: 24, borderRadius: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+              <h3 id="login-dialog-title" style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
                 Sign In
               </h3>
               <button
                 className="btn-icon"
                 onClick={() => setIsLoginModalOpen(false)}
+                aria-label="Close Sign In Dialog"
                 style={{ padding: 4 }}
               >
                 <X size={18} weight="bold" />
@@ -434,11 +447,11 @@ export default function GatAppPage({ params }: PageProps) {
 
       {/* ── Switch Active Role Modal (Modern Unique Design) ── */}
       {isRoleSwitchModalOpen && currentUser && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="role-dialog-title">
           <div className="modal-card" style={{ maxWidth: 480, padding: 28, borderRadius: 16 }}>
             {/* Header */}
             <div style={{ marginBottom: 6 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+              <h3 id="role-dialog-title" style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
                 Switch Active Role
               </h3>
             </div>
@@ -448,7 +461,7 @@ export default function GatAppPage({ params }: PageProps) {
             </p>
 
             {/* Role List */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }} role="radiogroup" aria-label="Available Roles">
               {currentUser.roles.map((roleName) => {
                 const key = roleName.toLowerCase();
                 const isActive =
@@ -486,7 +499,16 @@ export default function GatAppPage({ params }: PageProps) {
                 return (
                   <div
                     key={roleName}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isActive}
                     onClick={() => handleSelectActiveRole(roleName)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleSelectActiveRole(roleName);
+                      }
+                    }}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -533,6 +555,7 @@ export default function GatAppPage({ params }: PageProps) {
               type="button"
               className="btn-secondary"
               onClick={() => setIsRoleSwitchModalOpen(false)}
+              aria-label="Close Role Switch Dialog"
               style={{ width: "100%", justifyContent: "center", padding: "10px 0", fontSize: 14, fontWeight: 600 }}
             >
               Close
@@ -540,6 +563,7 @@ export default function GatAppPage({ params }: PageProps) {
           </div>
         </div>
       )}
+
     </div>
   );
 }

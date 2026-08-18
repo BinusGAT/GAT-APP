@@ -180,7 +180,19 @@
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+
+  /* Accessible focus rings for keyboard navigation */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid #4f46e5 !important;
+    outline-offset: 2px !important;
+  }
 }
+
 
 /* ============================================================
    RESET & BASE

@@ -101,6 +101,7 @@ export default function Sidebar({
           className="header-candybox-btn"
           onClick={onClose}
           title="Toggle Menu"
+          aria-label="Toggle Menu"
         >
           <DotsNine size={22} weight="bold" />
         </button>
