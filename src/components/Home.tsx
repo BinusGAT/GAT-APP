@@ -204,7 +204,7 @@ export default function Home({
           className="app-iframe"
           src={displayContentValue}
           title="Home Page Embed"
-          sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
           style={{ width: "100%", height: "100%", border: "none" }}
         />
         </div>

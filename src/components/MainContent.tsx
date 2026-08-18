@@ -97,7 +97,7 @@ function ContentRenderer({
           src={button.source}
           title={button.button_name}
           onLoad={() => setLoading(false)}
-          sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
         />
       </div>
     );
