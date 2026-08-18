@@ -27,6 +27,7 @@ interface HomeProps {
   initialHomeSettings?: { type: string; value: string };
   initialFavorites?: number[];
   initialAnnouncements?: Announcement[];
+  onNavigate?: (slug: string) => void;
 }
 
 export default function Home({
@@ -35,8 +36,10 @@ export default function Home({
   initialHomeSettings,
   initialFavorites,
   initialAnnouncements,
+  onNavigate,
 }: HomeProps) {
   const router = useRouter();
+
   const [contentType, setContentType] = useState<"html" | "embed" | "">(
     (initialHomeSettings?.type || cachedHomeType) as "html" | "embed" | ""
   );
@@ -264,9 +267,15 @@ export default function Home({
     if (btn.source_type === "link") {
       window.open(btn.source, "_blank", "noopener,noreferrer");
     } else {
-      router.push("/" + slugify(btn.button_name));
+      const targetSlug = slugify(btn.button_name);
+      if (onNavigate) {
+        onNavigate(targetSlug);
+      } else {
+        router.push("/" + targetSlug);
+      }
     }
   };
+
 
   const favoriteButtons = displayButtons.filter((btn) => favoriteIds.includes(btn.id));
 

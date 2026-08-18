@@ -210,8 +210,10 @@ export const migrations: Migration[] = [
       const userTableInfo = await authClient.execute(`PRAGMA table_info(users)`);
       const userCols = new Set(userTableInfo.rows.map((r) => String(r.name).toLowerCase()));
       if (!userCols.has("updated_at")) {
-        await authClient.execute(`ALTER TABLE users ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await authClient.execute(`ALTER TABLE users ADD COLUMN updated_at TIMESTAMP;`);
+        await authClient.execute(`UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;`);
       }
+
 
       // 4. Transfer legacy favorites if present in authClient
       if (authClient !== client) {

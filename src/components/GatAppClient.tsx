@@ -1,0 +1,639 @@
+"use client";
+
+import React, { useState, useEffect, useCallback } from "react";
+import Sidebar from "@/components/Sidebar";
+
+import Home from "@/components/Home";
+import MainContent from "@/components/MainContent";
+import AppState from "@/components/AppState";
+import { Button } from "@/lib/db";
+import {
+  getButtons,
+  getAppBootstrapData,
+  verifyUserCredentials,
+  logout,
+  switchActiveRole,
+  recordApplicationOpen,
+  Announcement,
+  AppBootstrapData,
+} from "@/lib/actions";
+import { formatRoleName, isAdministratorRole } from "@/lib/permissions";
+import {
+  DotsNine,
+  ArrowLeft,
+  SignIn,
+  SignOut,
+  Shield,
+  Lightning,
+  ChalkboardTeacher,
+  GraduationCap,
+  CheckCircle,
+  X,
+} from "@phosphor-icons/react";
+import {
+  getClientStore,
+  setClientStoreBootstrap,
+  setClientStoreUser,
+  setClientStoreButtons,
+  resetClientStore,
+  CachedUser,
+} from "@/lib/client-cache";
+
+// Helper to generate URL-friendly slug
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/[-\s]+/g, "-");
+}
+
+export type LoggedInUser = CachedUser;
+
+interface GatAppClientProps {
+  slug?: string[];
+  initialData?: AppBootstrapData;
+}
+
+export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
+  if (initialData && !getClientStore().isLoaded) {
+    setClientStoreBootstrap(initialData);
+  }
+
+
+  const store = getClientStore();
+  const [buttons, setButtons] = useState<Button[]>(() => initialData?.buttons || store.buttons);
+  const [loading, setLoading] = useState(false);
+
+  // User Authentication & Role State
+  const [currentUser, setCurrentUser] = useState<LoggedInUser | null>(() => (initialData !== undefined ? initialData.user : store.user));
+  const [sessionLoaded, setSessionLoaded] = useState(true);
+
+  // Bootstrap data for Home view
+  const [homeSettings, setHomeSettings] = useState<{ type: string; value: string } | undefined>(
+    () => (initialData !== undefined ? initialData.homeSettings : store.homeSettings)
+  );
+  const [favorites, setFavorites] = useState<number[] | undefined>(
+    () => (initialData !== undefined ? initialData.favorites : store.favorites)
+  );
+  const [announcements, setAnnouncements] = useState<Announcement[] | undefined>(
+    () => (initialData !== undefined ? initialData.announcements : store.announcements)
+  );
+
+  // Modal open states
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isRoleSwitchModalOpen, setIsRoleSwitchModalOpen] = useState(false);
+
+  // Login Form fields
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginNim, setLoginNim] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // If initialData wasn't provided (or needs background sync), fetch bootstrap in background
+  useEffect(() => {
+    if (initialData || getClientStore().isLoaded) return;
+    let isCancelled = false;
+    getAppBootstrapData()
+      .then((data) => {
+        if (isCancelled) return;
+        setClientStoreBootstrap(data);
+
+        setCurrentUser(data.user);
+        if (data.buttons && data.buttons.length > 0) {
+          setButtons(data.buttons);
+        }
+        setHomeSettings(data.homeSettings);
+        setFavorites(data.favorites);
+        setAnnouncements(data.announcements);
+      })
+      .catch((e) => console.error("Failed to bootstrap application:", e))
+      .finally(() => {
+        if (!isCancelled) {
+          setSessionLoaded(true);
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [initialData]);
+
+  // Keyboard accessibility: Close modals on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isLoginModalOpen) setIsLoginModalOpen(false);
+        if (isRoleSwitchModalOpen) setIsRoleSwitchModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isLoginModalOpen, isRoleSwitchModalOpen]);
+
+  const fetchButtons = useCallback(async () => {
+    try {
+      const data = await getButtons();
+      setClientStoreButtons(data);
+      setButtons(data);
+    } catch (err) {
+      console.error("Failed to load buttons:", err);
+    }
+  }, []);
+
+  // Client-side instant tab router state
+  const initialSlug = slug && slug.length > 0 ? slug[0] : "";
+  const [currentSlug, setCurrentSlug] = useState<string>(initialSlug);
+
+  // Sync state if browser back/forward buttons are clicked
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.replace(/^\/+/, "");
+      setCurrentSlug(path === "home" ? "" : path);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const navigateToSlug = useCallback((targetSlug: string) => {
+    const cleanSlug = targetSlug === "home" ? "" : targetSlug;
+    setCurrentSlug(cleanSlug);
+    const targetUrl = "/" + (cleanSlug ? cleanSlug : "home");
+    if (window.location.pathname !== targetUrl) {
+      window.history.pushState(null, "", targetUrl);
+    }
+  }, []);
+
+  // Compute admin status based on activeRole
+  const isAdmin = !!(
+    currentUser &&
+    currentUser.activeRole &&
+    isAdministratorRole(currentUser.activeRole)
+  );
+
+  let activeView:
+    | { kind: "home" }
+    | { kind: "admin" }
+    | { kind: "content"; button: Button }
+    | { kind: "denied" }
+    | { kind: "not-found" } = { kind: "home" };
+
+  if (currentSlug === "settings" && (isAdmin || !sessionLoaded)) {
+    activeView = { kind: "admin" };
+  } else if (currentSlug === "settings" && !isAdmin && sessionLoaded) {
+    activeView = { kind: "denied" };
+  } else if (currentSlug === "home" || !currentSlug) {
+    activeView = { kind: "home" };
+  } else if (currentSlug) {
+    const matchingButton = buttons.find(
+      (btn) => slugify(btn.button_name) === currentSlug
+    );
+    if (matchingButton) {
+      activeView = { kind: "content", button: matchingButton };
+    } else if (!loading) {
+      activeView = { kind: "not-found" };
+    }
+  }
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  const handleButtonClick = (button: Button) => {
+    void recordApplicationOpen(button.id);
+    if (button.source_type === "link") {
+      window.open(button.source, "_blank", "noopener,noreferrer");
+      return;
+    }
+    navigateToSlug(slugify(button.button_name));
+  };
+
+  const handleOpenAdmin = () => {
+    if (isAdmin) {
+      navigateToSlug("settings");
+    }
+  };
+
+  const handleGoHome = () => {
+    navigateToSlug("home");
+  };
+
+  // Login form submit handler
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+    setIsLoggingIn(true);
+
+    try {
+      const res = await verifyUserCredentials(loginEmail, loginNim);
+      if (res.success && res.user) {
+        const rawRoles: string[] = res.user.roles || res.user.role_name.split(",").map((r: string) => r.trim());
+        const userRoles: string[] = Array.from(new Set(rawRoles.filter(Boolean)));
+
+        const hasAdminRole = userRoles.some(isAdministratorRole);
+        const defaultRole = hasAdminRole
+          ? "Administrator"
+          : userRoles[0] || "User";
+
+        const userObj: LoggedInUser = {
+          name: res.user.name,
+          email: res.user.email,
+          roles: userRoles,
+          activeRole: defaultRole,
+        };
+
+        setClientStoreUser(userObj);
+        setCurrentUser(userObj);
+        await fetchButtons();
+        setIsLoginModalOpen(false);
+        setLoginEmail("");
+        setLoginNim("");
+      } else {
+        setLoginError(res.error || "Invalid Email or NIM credentials.");
+      }
+    } catch (err: unknown) {
+      setLoginError(err instanceof Error ? err.message : "Authentication failed.");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  // User Logout handler
+  const handleUserLogout = async () => {
+    await logout();
+    resetClientStore();
+    setCurrentUser(null);
+    await fetchButtons();
+    if (currentSlug === "settings") {
+      navigateToSlug("home");
+    }
+  };
+
+  // Switch Active Role handler
+  const handleSelectActiveRole = async (roleName: string) => {
+    if (!currentUser) return;
+    const result = await switchActiveRole(roleName);
+    if (!result.success || !result.activeRole) return;
+    const isNewAdmin = isAdministratorRole(result.activeRole);
+
+    const updatedUser: LoggedInUser = {
+      ...currentUser,
+      activeRole: isNewAdmin ? "Administrator" : result.activeRole,
+    };
+
+    setClientStoreUser(updatedUser);
+    setCurrentUser(updatedUser);
+    setIsRoleSwitchModalOpen(false);
+    await fetchButtons();
+
+    if (!isNewAdmin && currentSlug === "settings") {
+      navigateToSlug("home");
+    }
+  };
+
+
+  // Dynamic header title
+  let headerTitle = "HOME";
+  if (activeView.kind === "admin") headerTitle = "SYSTEM SETTINGS";
+  else if (activeView.kind === "content")
+    headerTitle = activeView.button.button_name.toUpperCase();
+  else if (activeView.kind === "denied") headerTitle = "ACCESS RESTRICTED";
+  else if (activeView.kind === "not-found") headerTitle = "PAGE NOT FOUND";
+
+  const activeButtonId = activeView.kind === "content" ? activeView.button.id : null;
+  const visibleButtons = buttons;
+
+  return (
+    <div className="app-container">
+      {/* ── Sidebar ── */}
+      <Sidebar
+        buttons={visibleButtons}
+        isLoading={loading}
+        activeButtonId={activeButtonId}
+        isAdminActive={activeView.kind === "admin"}
+        isHomeActive={activeView.kind === "home"}
+        canAccessSettings={isAdmin}
+        currentUser={currentUser}
+        onOpenRoleSwitch={() => setIsRoleSwitchModalOpen(true)}
+        onButtonClick={handleButtonClick}
+        onGoHome={handleGoHome}
+        onOpenAdmin={handleOpenAdmin}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
+
+      {/* ── Main Wrapper ── */}
+      <div className="main-wrapper">
+        {/* ── Header ── */}
+        <header className="app-header">
+          {!isSidebarOpen && (
+            <button
+              className="header-candybox-btn"
+              onClick={() => setIsSidebarOpen(true)}
+              title="Toggle Menu"
+            >
+              <DotsNine size={22} weight="bold" />
+            </button>
+          )}
+
+          {!isSidebarOpen && (
+            <div
+              className="logo-container"
+              style={{ cursor: "pointer" }}
+              onClick={handleGoHome}
+              title="Go to Home"
+            >
+              <span className="logo-gat">GAT</span>
+              <span className="logo-app">APP</span>
+            </div>
+          )}
+
+          {!isSidebarOpen && <div className="header-divider" />}
+          <span className="header-title">{headerTitle}</span>
+
+          {/* Back button when viewing content */}
+          {activeView.kind === "content" && (
+            <button
+              className="btn-secondary"
+              onClick={handleGoHome}
+              style={{ padding: "6px 14px", fontSize: 13, marginLeft: 16 }}
+            >
+              <ArrowLeft size={14} weight="bold" />
+              &nbsp;Back
+            </button>
+          )}
+
+          {/* Header Right Auth Controls */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+            {!currentUser ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setIsLoginModalOpen(true)}
+                style={{ padding: "6px 18px", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}
+              >
+                <SignIn size={16} weight="bold" />
+                Login
+              </button>
+            ) : (
+              <div className="user-profile-pill">
+                <div className="user-avatar-circle">
+                  {currentUser.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="user-info-text">
+                  <span className="user-name-title">{currentUser.name}</span>
+                  <span className="user-role-subtitle">{formatRoleName(currentUser.activeRole)}</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-logout-pill"
+                  onClick={handleUserLogout}
+                  title="Logout"
+                  style={{
+                    padding: 0,
+                    width: 32,
+                    height: 32,
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <SignOut size={16} weight="bold" />
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        {/* ── Main Viewport Content ── */}
+        <main className="main-content">
+          {loading ? (
+            <div className="iframe-loading" style={{ height: "100%" }}>
+              <div className="spinner" />
+              <p className="sidebar-title" style={{ marginTop: 12 }}>
+                Loading...
+              </p>
+            </div>
+          ) : (
+            <>
+              {activeView.kind === "home" && (
+                <Home
+                  buttons={visibleButtons}
+                  currentUser={currentUser}
+                  initialHomeSettings={homeSettings}
+                  initialFavorites={favorites}
+                  initialAnnouncements={announcements}
+                  onNavigate={navigateToSlug}
+                />
+              )}
+
+
+              {activeView.kind === "content" && (
+                <MainContent button={activeView.button} onGoHome={handleGoHome} />
+              )}
+
+              {activeView.kind === "admin" && (
+                <MainContent
+                  button={null}
+                  onGoHome={handleGoHome}
+                  isAdminMode
+                  buttons={buttons}
+                  onRefresh={fetchButtons}
+                />
+              )}
+
+              {activeView.kind === "denied" && <AppState variant="denied" />}
+
+              {activeView.kind === "not-found" && <AppState variant="not-found" />}
+            </>
+          )}
+        </main>
+      </div>
+
+      {/* ── Login Modal ── */}
+      {isLoginModalOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="login-dialog-title">
+          <div className="modal-card" style={{ maxWidth: 420, padding: 24, borderRadius: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 id="login-dialog-title" style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+                Sign In
+              </h3>
+              <button
+                className="btn-icon"
+                onClick={() => setIsLoginModalOpen(false)}
+                aria-label="Close Sign In Dialog"
+                style={{ padding: 4 }}
+              >
+                <X size={18} weight="bold" />
+              </button>
+            </div>
+
+            <form onSubmit={handleLoginSubmit} style={{ marginTop: 8 }}>
+              <div className="form-group" style={{ marginBottom: 14 }}>
+                <label className="form-label" htmlFor="header-login-email">Email Address</label>
+                <input
+                  id="header-login-email"
+                  type="email"
+                  className="form-input"
+                  placeholder="user@domain.com"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: 20 }}>
+                <label className="form-label" htmlFor="header-login-nim">NIM</label>
+                <input
+                  id="header-login-nim"
+                  type="password"
+                  className="form-input"
+                  placeholder="Enter NIM"
+                  value={loginNim}
+                  onChange={(e) => setLoginNim(e.target.value)}
+                  required
+                />
+              </div>
+
+              {loginError && (
+                <div className="error-message" style={{ marginBottom: 16 }}>
+                  {loginError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="btn-primary"
+                style={{ width: "100%", justifyContent: "center", padding: "10px 0" }}
+                disabled={isLoggingIn}
+              >
+                {isLoggingIn ? "Authenticating…" : "Sign In"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Switch Active Role Modal ── */}
+      {isRoleSwitchModalOpen && currentUser && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="role-dialog-title">
+          <div className="modal-card" style={{ maxWidth: 480, padding: 28, borderRadius: 16 }}>
+            {/* Header */}
+            <div style={{ marginBottom: 6 }}>
+              <h3 id="role-dialog-title" style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+                Switch Active Role
+              </h3>
+            </div>
+
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5, margin: "0 0 20px" }}>
+              Choose which role to use for this session. Your permissions and access will update instantly across GAT App.
+            </p>
+
+            {/* Role List */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }} role="radiogroup" aria-label="Available Roles">
+              {currentUser.roles.map((roleName) => {
+                const key = roleName.toLowerCase();
+                const isActive =
+                  currentUser.activeRole.toLowerCase() === key ||
+                  (key === "admin" && currentUser.activeRole.toLowerCase() === "administrator") ||
+                  (key === "administrator" && currentUser.activeRole.toLowerCase() === "admin");
+
+                let title = roleName;
+                let desc = "Standard user access";
+                let icon = <GraduationCap size={22} weight="bold" color="#64748B" />;
+                let iconBg = "#F1F5F9";
+
+                if (isAdministratorRole(key)) {
+                  title = "Administrator";
+                  desc = "Full system control, buttons & platform settings";
+                  icon = <Shield size={22} weight="bold" color="#4F46E5" />;
+                  iconBg = "#EEF2FF";
+                } else if (key === "intern") {
+                  title = "Intern";
+                  desc = "Social Media Intern";
+                  icon = <Lightning size={22} weight="bold" color="#D97706" />;
+                  iconBg = "#FFFBEB";
+                } else if (key === "lecturer") {
+                  title = "Lecturer";
+                  desc = "Lecturer Academic Access";
+                  icon = <ChalkboardTeacher size={22} weight="bold" color="#059669" />;
+                  iconBg = "#ECFDF5";
+                } else if (key === "student") {
+                  title = "Student";
+                  desc = "Student Learning Access";
+                  icon = <GraduationCap size={22} weight="bold" color="#64748B" />;
+                  iconBg = "#F1F5F9";
+                }
+
+                return (
+                  <div
+                    key={roleName}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isActive}
+                    onClick={() => handleSelectActiveRole(roleName)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleSelectActiveRole(roleName);
+                      }
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 14,
+                      padding: "14px 16px",
+                      borderRadius: 12,
+                      border: `1.5px solid ${isActive ? "#4F46E5" : "var(--border-color)"}`,
+                      background: isActive ? "#EEF2FF" : "var(--bg-secondary)",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: 10,
+                        background: iconBg,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {icon}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
+                        {title}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                        {desc}
+                      </div>
+                    </div>
+                    {isActive && (
+                      <CheckCircle size={22} weight="fill" color="#4F46E5" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setIsRoleSwitchModalOpen(false)}
+              aria-label="Close Role Switch Dialog"
+              style={{ width: "100%", justifyContent: "center", padding: "10px 0", fontSize: 14, fontWeight: 600 }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
