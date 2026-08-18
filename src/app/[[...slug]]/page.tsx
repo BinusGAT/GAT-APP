@@ -7,7 +7,16 @@ import Home from "@/components/Home";
 import MainContent from "@/components/MainContent";
 import AppState from "@/components/AppState";
 import { Button } from "@/lib/db";
-import { getButtons, getCurrentUser, verifyUserCredentials, logout, switchActiveRole, recordApplicationOpen } from "@/lib/actions";
+import {
+  getButtons,
+  getAppBootstrapData,
+  verifyUserCredentials,
+  logout,
+  switchActiveRole,
+  recordApplicationOpen,
+  Announcement,
+} from "@/lib/actions";
+
 import { formatRoleName, isAdministratorRole } from "@/lib/permissions";
 import {
   DotsNine,
@@ -55,6 +64,11 @@ export default function GatAppPage({ params }: PageProps) {
   const [currentUser, setCurrentUser] = useState<LoggedInUser | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
 
+  // Bootstrap data for Home view
+  const [homeSettings, setHomeSettings] = useState<{ type: string; value: string } | undefined>(undefined);
+  const [favorites, setFavorites] = useState<number[] | undefined>(undefined);
+  const [announcements, setAnnouncements] = useState<Announcement[] | undefined>(undefined);
+
   // Modal open states
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRoleSwitchModalOpen, setIsRoleSwitchModalOpen] = useState(false);
@@ -65,12 +79,26 @@ export default function GatAppPage({ params }: PageProps) {
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // Restore identity only from the authenticated server session.
+  // Consolidated parallel bootstrap fetch on initial mount
   useEffect(() => {
-    getCurrentUser()
-      .then(setCurrentUser)
-      .catch((e) => console.error("Failed to restore auth session:", e))
-      .finally(() => setSessionLoaded(true));
+    getAppBootstrapData()
+      .then((data) => {
+        if (data.user) {
+          setCurrentUser(data.user);
+        }
+        if (data.buttons && data.buttons.length > 0) {
+          cachedButtons = data.buttons;
+          setButtons(data.buttons);
+        }
+        setHomeSettings(data.homeSettings);
+        setFavorites(data.favorites);
+        setAnnouncements(data.announcements);
+      })
+      .catch((e) => console.error("Failed to bootstrap application:", e))
+      .finally(() => {
+        setSessionLoaded(true);
+        setLoading(false);
+      });
   }, []);
 
   // Keyboard accessibility: Close modals on Escape key
@@ -92,15 +120,9 @@ export default function GatAppPage({ params }: PageProps) {
       setButtons(data);
     } catch (err) {
       console.error("Failed to load buttons:", err);
-    } finally {
-      setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => void fetchButtons(), 0);
-    return () => window.clearTimeout(timer);
-  }, [fetchButtons]);
 
   // Determine active view based on slug parameter in URL path
   const currentSlug = slug && slug.length > 0 ? slug[0] : "";
@@ -356,7 +378,15 @@ export default function GatAppPage({ params }: PageProps) {
             </div>
           ) : (
             <>
-              {activeView.kind === "home" && <Home buttons={visibleButtons} currentUser={currentUser} />}
+              {activeView.kind === "home" && (
+                <Home
+                  buttons={visibleButtons}
+                  currentUser={currentUser}
+                  initialHomeSettings={homeSettings}
+                  initialFavorites={favorites}
+                  initialAnnouncements={announcements}
+                />
+              )}
 
               {activeView.kind === "content" && (
                 <MainContent button={activeView.button} onGoHome={handleGoHome} />

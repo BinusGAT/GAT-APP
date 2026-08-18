@@ -961,7 +961,100 @@ export async function getUsageAnalytics(): Promise<{
   };
 }
 
+// ── Consolidated Bootstrap Action ─────────────────────────────
+export interface AppBootstrapData {
+  user: { name: string; email: string; roles: string[]; activeRole: string } | null;
+  buttons: Button[];
+  homeSettings: { type: string; value: string };
+  favorites: number[];
+  announcements: Announcement[];
+}
+
+export async function getAppBootstrapData(): Promise<AppBootstrapData> {
+  await ensureDb();
+  try {
+    const session = await readSession();
+    const user =
+      session && session.kind === "user" && session.email && session.name
+        ? { name: session.name, email: session.email, roles: session.roles, activeRole: session.activeRole }
+        : null;
+
+    const now = Date.now();
+
+    const [buttonsResult, settingsResult, announcementsResult, favoritesResult] = await Promise.all([
+      client.execute(`SELECT * FROM buttons ORDER BY "order" ASC, id ASC`),
+      client.execute("SELECT key, value FROM settings WHERE key IN ('home_content_type', 'home_content_value')"),
+      client.execute({
+        sql: `SELECT * FROM announcements WHERE is_active = 1
+              AND (starts_at IS NULL OR starts_at <= ?) AND (ends_at IS NULL OR ends_at >= ?)
+              ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, created_at DESC`,
+        args: [now, now],
+      }),
+      (async () => {
+        if (!user || !user.email) return [];
+        try {
+          const sessionEmail = user.email.trim().toLowerCase();
+          const userRes = await authClient.execute({
+            sql: "SELECT id FROM users WHERE LOWER(email) = ?",
+            args: [sessionEmail],
+          });
+          if (userRes.rows.length === 0) return [];
+          const userId = Number(userRes.rows[0].id);
+          const favRes = await client.execute({
+            sql: "SELECT button_id FROM user_favorites WHERE user_id = ?",
+            args: [userId],
+          });
+          return favRes.rows.map((row) => Number(row.button_id));
+        } catch {
+          return [];
+        }
+      })(),
+    ]);
+
+    const buttons = buttonsResult.rows.map(rowToButton).filter((button) => canAccessResource(session, button));
+
+    let type = "";
+    let value = "";
+    for (const row of settingsResult.rows) {
+      if (row.key === "home_content_type") type = String(row.value);
+      if (row.key === "home_content_value") value = String(row.value);
+    }
+
+    const announcements = announcementsResult.rows
+      .map((row) => ({
+        id: Number(row.id),
+        title: String(row.title),
+        message: String(row.message),
+        severity: row.severity as Announcement["severity"],
+        is_active: Boolean(row.is_active),
+        starts_at: row.starts_at == null ? null : Number(row.starts_at),
+        ends_at: row.ends_at == null ? null : Number(row.ends_at),
+        target_roles: String(row.target_roles || "all"),
+        created_at: String(row.created_at),
+      }))
+      .filter((announcement) => canAccessResource(session, { allowed_roles: announcement.target_roles }));
+
+    return {
+      user,
+      buttons,
+      homeSettings: { type, value },
+      favorites: favoritesResult,
+      announcements,
+    };
+  } catch (error) {
+    console.error("Error in getAppBootstrapData:", error);
+    return {
+      user: null,
+      buttons: [],
+      homeSettings: { type: "", value: "" },
+      favorites: [],
+      announcements: [],
+    };
+  }
+}
+
 function isPrivateAddress(address: string): boolean {
+
   if (net.isIPv4(address)) {
     const [a, b] = address.split(".").map(Number);
     return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);

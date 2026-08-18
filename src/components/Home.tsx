@@ -24,79 +24,128 @@ let isHomeDataLoaded = false;
 interface HomeProps {
   buttons?: Button[];
   currentUser?: { email: string; name: string; activeRole: string } | null;
+  initialHomeSettings?: { type: string; value: string };
+  initialFavorites?: number[];
+  initialAnnouncements?: Announcement[];
 }
 
-export default function Home({ buttons: propsButtons, currentUser }: HomeProps) {
+export default function Home({
+  buttons: propsButtons,
+  currentUser,
+  initialHomeSettings,
+  initialFavorites,
+  initialAnnouncements,
+}: HomeProps) {
   const router = useRouter();
   const [contentType, setContentType] = useState<"html" | "embed" | "">(
-    cachedHomeType as "html" | "embed" | ""
+    (initialHomeSettings?.type || cachedHomeType) as "html" | "embed" | ""
   );
-  const [contentValue, setContentValue] = useState(cachedHomeValue);
-  const [buttons, setButtons] = useState<Button[]>(() => {
-    if (propsButtons && propsButtons.length > 0) return propsButtons;
-    return cachedHomeButtons;
-  });
+  const [contentValue, setContentValue] = useState(initialHomeSettings?.value || cachedHomeValue);
+  const [fetchedButtons, setFetchedButtons] = useState<Button[]>(cachedHomeButtons);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [favoriteIds, setFavoriteIds] = useState<number[]>([]);
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [favoriteOverrides, setFavoriteOverrides] = useState<Record<number, boolean>>({});
+  const [fetchedFavorites, setFetchedFavorites] = useState<number[]>([]);
+  const [fetchedAnnouncements, setFetchedAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(() => {
     if (propsButtons && propsButtons.length > 0) return false;
+    if (initialHomeSettings !== undefined) return false;
     return !isHomeDataLoaded;
   });
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Sync favorites when currentUser changes
+  const displayButtons = propsButtons && propsButtons.length > 0 ? propsButtons : fetchedButtons;
+  const displayContentType = initialHomeSettings ? (initialHomeSettings.type as "html" | "embed" | "") : contentType;
+  const displayContentValue = initialHomeSettings ? initialHomeSettings.value : contentValue;
+  const displayAnnouncements = initialAnnouncements || fetchedAnnouncements;
+
+  const baseFavoriteIds = initialFavorites !== undefined ? initialFavorites : fetchedFavorites;
+  const favoriteIds = baseFavoriteIds
+    .filter((id) => favoriteOverrides[id] !== false)
+    .concat(
+      Object.keys(favoriteOverrides)
+        .map(Number)
+        .filter((id) => favoriteOverrides[id] === true && !baseFavoriteIds.includes(id))
+    );
+
+  // Fetch data only if not provided via props
   useEffect(() => {
+    if (initialFavorites !== undefined) return;
+    let isCancelled = false;
     async function loadFavs() {
       if (currentUser && currentUser.email) {
         const favs = await getUserFavorites(currentUser.email);
-        setFavoriteIds(favs);
+        if (!isCancelled) setFetchedFavorites(favs);
       } else {
-        setFavoriteIds([]);
+        if (!isCancelled) setFetchedFavorites([]);
       }
     }
-    loadFavs();
-  }, [currentUser]);
+    void loadFavs();
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser, initialFavorites]);
 
   useEffect(() => {
-    void getActiveAnnouncements().then(setAnnouncements).catch(() => setAnnouncements([]));
-  }, [currentUser]);
+    if (initialAnnouncements !== undefined) return;
+    let isCancelled = false;
+    void getActiveAnnouncements()
+      .then((data) => {
+        if (!isCancelled) setFetchedAnnouncements(data);
+      })
+      .catch(() => {
+        if (!isCancelled) setFetchedAnnouncements([]);
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser, initialAnnouncements]);
 
   const handleToggleStar = async (e: React.MouseEvent, buttonId: number) => {
     e.stopPropagation();
     if (!currentUser || !currentUser.email) return;
 
-    setFavoriteIds((prev) =>
-      prev.includes(buttonId) ? prev.filter((id) => id !== buttonId) : [...prev, buttonId]
-    );
+    const isCurrentlyFav = favoriteIds.includes(buttonId);
+    setFavoriteOverrides((prev) => ({
+      ...prev,
+      [buttonId]: !isCurrentlyFav,
+    }));
 
     await toggleUserFavorite(currentUser.email, buttonId);
   };
 
   useEffect(() => {
+    if (initialHomeSettings !== undefined && propsButtons && propsButtons.length > 0) return;
+    let isCancelled = false;
     async function loadHomeData() {
       try {
         const [{ type, value }, btnData] = await Promise.all([
           getHomeSettings(),
           propsButtons && propsButtons.length > 0 ? Promise.resolve(propsButtons) : getButtons(),
         ]);
-        cachedHomeType = type;
-        cachedHomeValue = value;
-        cachedHomeButtons = btnData || [];
-        isHomeDataLoaded = true;
+        if (!isCancelled) {
+          cachedHomeType = type;
+          cachedHomeValue = value;
+          cachedHomeButtons = btnData || [];
+          isHomeDataLoaded = true;
 
-        setContentType((type as "html" | "embed") || "");
-        setContentValue(value || "");
-        setButtons(btnData || []);
+          setContentType((type as "html" | "embed") || "");
+          setContentValue(value || "");
+          setFetchedButtons(btnData || []);
+          setLoading(false);
+        }
       } catch (err) {
         console.error("Failed to load home page content settings:", err);
-      } finally {
-        setLoading(false);
+        if (!isCancelled) setLoading(false);
       }
     }
-    loadHomeData();
-  }, [propsButtons]);
+    void loadHomeData();
+    return () => {
+      isCancelled = true;
+    };
+  }, [propsButtons, initialHomeSettings]);
+
+
 
   useEffect(() => {
     if (!loading && contentType === "html" && containerRef.current) {
@@ -131,9 +180,9 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
     );
   }
 
-  const announcementPanel = announcements.length > 0 ? (
+  const announcementPanel = displayAnnouncements.length > 0 ? (
     <div className="portal-announcements" aria-label="Announcements">
-      {announcements.map((announcement) => (
+      {displayAnnouncements.map((announcement) => (
         <div key={announcement.id} className={`portal-announcement ${announcement.severity}`}>
           <Megaphone size={18} weight="bold" />
           <div><strong>{announcement.title}</strong><p>{announcement.message}</p></div>
@@ -143,14 +192,14 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
   ) : null;
 
   // ── Embed (iframe) mode ──
-  if (contentType === "embed" && contentValue.trim()) {
+  if (displayContentType === "embed" && displayContentValue.trim()) {
     return (
       <div className="portal-custom-home">
         {announcementPanel}
         <div className="iframe-container" style={{ flex: 1, width: "100%" }}>
         <iframe
           className="app-iframe"
-          src={contentValue}
+          src={displayContentValue}
           title="Home Page Embed"
           sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
           style={{ width: "100%", height: "100%", border: "none" }}
@@ -161,7 +210,7 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
   }
 
   // ── Custom HTML mode ──
-  if (contentType === "html" && contentValue.trim()) {
+  if (displayContentType === "html" && displayContentValue.trim()) {
     return (
       <div className="portal-custom-home">
         {announcementPanel}
@@ -169,7 +218,7 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
         ref={containerRef}
         className="dashboard"
         style={{ padding: "32px", overflowY: "auto", flex: 1 }}
-        dangerouslySetInnerHTML={{ __html: contentValue }}
+        dangerouslySetInnerHTML={{ __html: displayContentValue }}
       />
       </div>
     );
@@ -180,7 +229,7 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
 
   // Extract all unique category strings from buttons
   const uniqueCategories = Array.from(
-    new Set(buttons.map((b) => (b.category || "apps").trim()).filter(Boolean))
+    new Set(displayButtons.map((b) => (b.category || "apps").trim()).filter(Boolean))
   );
 
   const customCategories = uniqueCategories.filter(
@@ -195,7 +244,7 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
     ...customCategories.map((c) => ({ key: c.toLowerCase(), label: c })),
   ];
 
-  const filteredButtons = buttons.filter((btn) => {
+  const filteredButtons = displayButtons.filter((btn) => {
     const matchesSearch = btn.button_name.toLowerCase().includes(searchQuery.trim().toLowerCase());
     const btnCategory = (btn.category || "apps").trim().toLowerCase();
     const matchesCategory =
@@ -204,8 +253,8 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
   });
 
   const getCategoryCount = (catKey: string) => {
-    if (catKey === "all") return buttons.length;
-    return buttons.filter(
+    if (catKey === "all") return displayButtons.length;
+    return displayButtons.filter(
       (b) => (b.category || "apps").trim().toLowerCase() === catKey.toLowerCase()
     ).length;
   };
@@ -219,7 +268,8 @@ export default function Home({ buttons: propsButtons, currentUser }: HomeProps) 
     }
   };
 
-  const favoriteButtons = buttons.filter((btn) => favoriteIds.includes(btn.id));
+  const favoriteButtons = displayButtons.filter((btn) => favoriteIds.includes(btn.id));
+
 
   return (
     <div className="portal-container">
