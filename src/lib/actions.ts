@@ -25,6 +25,7 @@ import {
   normalizeRoles,
   ROLE_OPTIONS,
   serializeAllowedRoles,
+  isValidAllowedRolesString,
 } from "./permissions";
 import {
   LOGIN_ACCOUNT_POLICY,
@@ -558,7 +559,7 @@ function validateButtonInput(data: ButtonInput): string | null {
   if (!data || !data.button_name?.trim() || !data.source?.trim() || !data.icon?.trim()) return "Name, source, and icon are required.";
   if (!["link", "embed", "code"].includes(data.source_type)) return "Invalid source type.";
   if (data.button_name.length > 120 || data.source.length > 100_000 || data.icon.length > 80) return "Button data exceeds the allowed length.";
-  if (data.allowed_roles && !/^(all|[a-z]+(?:,[a-z]+)*)$/i.test(data.allowed_roles.trim())) return "Invalid role permissions.";
+  if (data.allowed_roles && !isValidAllowedRolesString(data.allowed_roles.trim())) return "Invalid role permissions.";
   return null;
 }
 

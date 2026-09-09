@@ -157,3 +157,20 @@ export function serializeAllowedRoles(roles: string[]): string {
 
   return [ADMINISTRATOR_ROLE, ...specific].join(",");
 }
+
+export function isValidAllowedRolesString(allowedRoles: string | null | undefined): boolean {
+  if (!allowedRoles) return true;
+  const parts = allowedRoles.split(",").map((r) => r.trim().toLowerCase()).filter(Boolean);
+  if (parts.length === 0) return false;
+  const validIds = new Set<string>([
+    PUBLIC_ROLE,
+    ALL_ROLES,
+    ADMINISTRATOR_ROLE,
+    "all",
+    "authenticated",
+    "admin",
+    "superadmin",
+    ...SPECIFIC_ROLES,
+  ]);
+  return parts.every((p) => validIds.has(p));
+}

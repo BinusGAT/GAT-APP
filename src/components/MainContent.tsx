@@ -22,6 +22,10 @@ import {
   Pulse,
   Megaphone,
   ChartBar,
+  Globe,
+  Users,
+  LockKey,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import { Button, Role, UserWithRole } from "@/lib/db";
 import {
@@ -1009,15 +1013,29 @@ function AdminPanel({
                     );
                   })}
                 </div>
-                <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
-                  {fAllowedRoles.includes(PUBLIC_ROLE)
-                    ? "🌐 Public: Anyone can view and launch this app without signing in."
-                    : fAllowedRoles.includes(ALL_ROLES) || SPECIFIC_ROLES.every((r) => fAllowedRoles.includes(r))
-                    ? "👥 All Roles: Any signed-in user (Intern, Student, Lecturer, Admin) can view and launch this app."
-                    : fAllowedRoles.some((r) => (SPECIFIC_ROLES as readonly string[]).includes(r))
-                    ? `🔒 Restricted: Visible only to Administrators and selected roles (${fAllowedRoles.filter((r) => (SPECIFIC_ROLES as readonly string[]).includes(r)).map((r) => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")}).`
-                    : "🛡️ Admin Only: Unticked - available only for Administrators."}
-                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+                  {fAllowedRoles.includes(PUBLIC_ROLE) ? (
+                    <>
+                      <Globe size={15} weight="bold" style={{ color: "#10b981", flexShrink: 0 }} />
+                      <span><strong>Public:</strong> Anyone can view and launch this app without signing in.</span>
+                    </>
+                  ) : fAllowedRoles.includes(ALL_ROLES) || SPECIFIC_ROLES.every((r) => fAllowedRoles.includes(r)) ? (
+                    <>
+                      <Users size={15} weight="bold" style={{ color: "#6366f1", flexShrink: 0 }} />
+                      <span><strong>All Roles:</strong> Any signed-in user (Intern, Student, Lecturer, Admin) can view and launch this app.</span>
+                    </>
+                  ) : fAllowedRoles.some((r) => (SPECIFIC_ROLES as readonly string[]).includes(r)) ? (
+                    <>
+                      <LockKey size={15} weight="bold" style={{ color: "#8b5cf6", flexShrink: 0 }} />
+                      <span><strong>Restricted:</strong> Visible only to Administrators and selected roles ({fAllowedRoles.filter((r) => (SPECIFIC_ROLES as readonly string[]).includes(r)).map((r) => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")}).</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck size={15} weight="bold" style={{ color: "#ef4444", flexShrink: 0 }} />
+                      <span><strong>Admin Only:</strong> Unticked - available only for Administrators.</span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
