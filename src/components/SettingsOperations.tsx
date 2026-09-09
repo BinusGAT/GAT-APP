@@ -13,7 +13,14 @@ import {
   refreshApplicationHealth,
   saveAnnouncement,
 } from "@/lib/actions";
-import { parseAllowedRoles, ROLE_OPTIONS } from "@/lib/permissions";
+import {
+  parseAllowedRoles,
+  ROLE_OPTIONS,
+  PUBLIC_ROLE,
+  ALL_ROLES,
+  ADMINISTRATOR_ROLE,
+  SPECIFIC_ROLES,
+} from "@/lib/permissions";
 
 export type OperationsView = "audit" | "health" | "announcements" | "analytics";
 
@@ -67,7 +74,7 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<number | undefined>();
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
-  const [targetRoles, setTargetRoles] = useState<string[]>(["all"]);
+  const [targetRoles, setTargetRoles] = useState<string[]>([PUBLIC_ROLE]);
   const [auditFilter, setAuditFilter] = useState("");
   const [auditPage, setAuditPage] = useState(1);
   const [expandedAuditId, setExpandedAuditId] = useState<number | null>(null);
@@ -102,7 +109,7 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
     const result = await saveAnnouncement({ id: editingAnnouncementId, title, message, severity, isActive: true,
       startsAt: startsAt ? new Date(startsAt).getTime() : null, endsAt: endsAt ? new Date(endsAt).getTime() : null, targetRoles });
     if (!result.success) { setError(result.error || "Unable to publish announcement."); return; }
-    setTitle(""); setMessage(""); setSeverity("info"); setStartsAt(""); setEndsAt(""); setTargetRoles(["all"]); setEditingAnnouncementId(undefined); setFormOpen(false); await load();
+    setTitle(""); setMessage(""); setSeverity("info"); setStartsAt(""); setEndsAt(""); setTargetRoles([PUBLIC_ROLE]); setEditingAnnouncementId(undefined); setFormOpen(false); await load();
   };
 
   const localDateTimeValue = (timestamp: number | null) => {
@@ -117,11 +124,43 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
   };
 
   const toggleTargetRole = (role: string) => {
-    if (role === "all") { setTargetRoles(["all"]); return; }
+    if (role === ADMINISTRATOR_ROLE) return;
+    if (role === PUBLIC_ROLE) {
+      setTargetRoles((curr) => curr.includes(PUBLIC_ROLE) ? [ADMINISTRATOR_ROLE] : [PUBLIC_ROLE]);
+      return;
+    }
+
     setTargetRoles((current) => {
-      const withoutAll = current.filter((item) => item !== "all");
-      const next = withoutAll.includes(role) ? withoutAll.filter((item) => item !== role) : [...withoutAll, role];
-      return next.length > 0 ? next : ["all"];
+      let currentSpecifics: string[] = [];
+      if (current.includes(ALL_ROLES)) {
+        currentSpecifics = [...SPECIFIC_ROLES];
+      } else {
+        currentSpecifics = current.filter((r) => (SPECIFIC_ROLES as readonly string[]).includes(r));
+      }
+
+      if (role === ALL_ROLES) {
+        const isAllChecked = current.includes(ALL_ROLES) || SPECIFIC_ROLES.every((r) => current.includes(r));
+        if (isAllChecked) {
+          return [ADMINISTRATOR_ROLE];
+        } else {
+          return [ALL_ROLES, ADMINISTRATOR_ROLE, ...SPECIFIC_ROLES];
+        }
+      }
+
+      let nextSpecifics: string[];
+      if (currentSpecifics.includes(role)) {
+        nextSpecifics = currentSpecifics.filter((r) => r !== role);
+      } else {
+        nextSpecifics = [...currentSpecifics, role];
+      }
+
+      if (nextSpecifics.length === 0) {
+        return [ADMINISTRATOR_ROLE];
+      } else if (SPECIFIC_ROLES.every((r) => nextSpecifics.includes(r))) {
+        return [ALL_ROLES, ADMINISTRATOR_ROLE, ...SPECIFIC_ROLES];
+      } else {
+        return [ADMINISTRATOR_ROLE, ...nextSpecifics];
+      }
     });
   };
 
@@ -166,8 +205,30 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
       </>}
 
       {view === "announcements" && <>
-        <div className="ops-heading"><div><h2>Announcements</h2><p>Publish immediately or schedule a start and end time.</p></div><button className="btn-primary" onClick={() => { setEditingAnnouncementId(undefined); setTitle(""); setMessage(""); setStartsAt(""); setEndsAt(""); setTargetRoles(["all"]); setFormOpen(!formOpen); }}><Plus size={15} />New announcement</button></div>
-        {formOpen && <form className="ops-form" onSubmit={createAnnouncement}><input className="form-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Announcement title" required maxLength={160}/><textarea className="form-input" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Message" required maxLength={2000}/><fieldset className="ops-audience"><legend>Audience</legend><div>{ROLE_OPTIONS.map((role) => <label key={role.id}><input type="checkbox" checked={targetRoles.includes(role.id)} onChange={() => toggleTargetRole(role.id)}/><span>{role.label}</span></label>)}</div></fieldset><div className="ops-schedule-fields"><label>Starts at <input className="form-input" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)}/></label><label>Ends at <input className="form-input" type="datetime-local" value={endsAt} min={startsAt} onChange={(e) => setEndsAt(e.target.value)}/></label></div><div className="ops-form-actions"><select className="form-input" value={severity} onChange={(e) => setSeverity(e.target.value as Announcement["severity"])}><option value="info">Information</option><option value="warning">Warning</option><option value="critical">Critical</option></select><button className="btn-primary" type="submit">{editingAnnouncementId ? "Save changes" : startsAt ? "Schedule" : "Publish"}</button></div></form>}
+        <div className="ops-heading"><div><h2>Announcements</h2><p>Publish immediately or schedule a start and end time.</p></div><button className="btn-primary" onClick={() => { setEditingAnnouncementId(undefined); setTitle(""); setMessage(""); setStartsAt(""); setEndsAt(""); setTargetRoles([PUBLIC_ROLE]); setFormOpen(!formOpen); }}><Plus size={15} />New announcement</button></div>
+        {formOpen && <form className="ops-form" onSubmit={createAnnouncement}><input className="form-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Announcement title" required maxLength={160}/><textarea className="form-input" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Message" required maxLength={2000}/><fieldset className="ops-audience"><legend>Audience</legend><div>{ROLE_OPTIONS.map((role) => {
+          const isAdministrator = role.id === ADMINISTRATOR_ROLE;
+          const isPublic = role.id === PUBLIC_ROLE;
+          const isAllRoles = role.id === ALL_ROLES;
+          let isChecked = false;
+          if (isAdministrator) {
+            isChecked = true;
+          } else if (isPublic) {
+            isChecked = targetRoles.includes(PUBLIC_ROLE);
+          } else if (isAllRoles) {
+            isChecked = !targetRoles.includes(PUBLIC_ROLE) &&
+              (targetRoles.includes(ALL_ROLES) || SPECIFIC_ROLES.every((r) => targetRoles.includes(r)));
+          } else {
+            isChecked = !targetRoles.includes(PUBLIC_ROLE) &&
+              (targetRoles.includes(ALL_ROLES) || targetRoles.includes(role.id));
+          }
+          return (
+            <label key={role.id} style={{ opacity: isAdministrator ? 0.8 : 1, cursor: isAdministrator ? "not-allowed" : "pointer" }}>
+              <input type="checkbox" checked={isChecked} disabled={isAdministrator} onChange={() => toggleTargetRole(role.id)}/>
+              <span>{role.label}</span>
+            </label>
+          );
+        })}</div></fieldset><div className="ops-schedule-fields"><label>Starts at <input className="form-input" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)}/></label><label>Ends at <input className="form-input" type="datetime-local" value={endsAt} min={startsAt} onChange={(e) => setEndsAt(e.target.value)}/></label></div><div className="ops-form-actions"><select className="form-input" value={severity} onChange={(e) => setSeverity(e.target.value as Announcement["severity"])}><option value="info">Information</option><option value="warning">Warning</option><option value="critical">Critical</option></select><button className="btn-primary" type="submit">{editingAnnouncementId ? "Save changes" : startsAt ? "Schedule" : "Publish"}</button></div></form>}
         <div className="ops-list">{announcements.map((item) => { const schedule = item.starts_at && item.starts_at > displayNow ? `Scheduled ${new Date(item.starts_at).toLocaleString()}` : item.ends_at && item.ends_at < displayNow ? "Expired" : item.ends_at ? `Active until ${new Date(item.ends_at).toLocaleString()}` : "Active"; const audience = parseAllowedRoles(item.target_roles).map((role) => ROLE_OPTIONS.find((option) => option.id === role)?.label || role).join(", "); return <div className="ops-list-row" key={item.id}><div className="ops-grow"><div><span className={`health-badge ${item.severity}`}>{item.severity}</span> <strong>{item.title}</strong></div><span>{item.message}</span><span>{schedule} · Audience: {audience}</span></div><button className="ops-icon-btn" title="Edit announcement" onClick={() => editAnnouncement(item)}><PencilSimple size={17}/></button><button className="ops-icon-btn" title="Delete announcement" onClick={async () => { await deleteAnnouncement(item.id); await load(); }}><Trash size={17}/></button></div>; })}{announcements.length === 0 && <div className="ops-empty">No announcements have been published.</div>}</div>
       </>}
 

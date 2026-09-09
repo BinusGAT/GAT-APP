@@ -42,9 +42,18 @@ import {
   updateUser,
   deleteUser,
 } from "@/lib/actions";
-import { getIconComponent } from "./Sidebar";
-import { parseAllowedRoles, ROLE_OPTIONS, serializeAllowedRoles } from "@/lib/permissions";
+import {
+  parseAllowedRoles,
+  ROLE_OPTIONS,
+  serializeAllowedRoles,
+  SPECIFIC_ROLES,
+  PUBLIC_ROLE,
+  ALL_ROLES,
+  ADMINISTRATOR_ROLE,
+  formatRoleBadge,
+} from "@/lib/permissions";
 import SettingsOperations, { OperationsView } from "./SettingsOperations";
+import { getIconComponent } from "./Sidebar";
 
 // ── Icon list for the picker ──────────────────────────────────
 const AVAILABLE_ICONS = [
@@ -141,7 +150,7 @@ function AdminPanel({
   const [fImageUrl, setFImageUrl] = useState("");
   const [fCategory, setFCategory] = useState<string>("apps");
   const [fCustomCategory, setFCustomCategory] = useState<string>("");
-  const [fAllowedRoles, setFAllowedRoles] = useState<string[]>(["all"]);
+  const [fAllowedRoles, setFAllowedRoles] = useState<string[]>([PUBLIC_ROLE]);
 
   // Tab switcher state
   const [activeTab, setActiveTab] = useState<"apps" | "home" | "users" | "superadmin" | OperationsView>("apps");
@@ -263,7 +272,7 @@ function AdminPanel({
         setFCustomCategory(cat);
       }
       const rawRoles = parseAllowedRoles(btn.allowed_roles);
-      setFAllowedRoles(rawRoles.length > 0 ? rawRoles : ["all"]);
+      setFAllowedRoles(rawRoles.length > 0 ? rawRoles : [PUBLIC_ROLE]);
     } else {
       setEditingBtn(null);
       setFName("");
@@ -273,7 +282,7 @@ function AdminPanel({
       setFImageUrl("");
       setFCategory("apps");
       setFCustomCategory("");
-      setFAllowedRoles(["all"]);
+      setFAllowedRoles([PUBLIC_ROLE]);
     }
     setIsModalOpen(true);
   };
@@ -487,6 +496,18 @@ function AdminPanel({
                       >
                         {btn.category || "apps"}
                       </span>
+                      {(() => {
+                        const rb = formatRoleBadge(btn.allowed_roles);
+                        return (
+                          <span
+                            className="badge-source-type"
+                            style={{ color: rb.color, background: rb.bg, textTransform: "none" }}
+                            title={`Access: ${rb.label}`}
+                          >
+                            {rb.label}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="config-item-url">
                       {btn.source.length > 90
@@ -896,12 +917,23 @@ function AdminPanel({
                 </label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                   {ROLE_OPTIONS.map((roleItem) => {
-                    const isAdministrator = roleItem.id === "administrator";
-                    const isChecked =
-                      isAdministrator ||
-                      (roleItem.id === "all"
-                        ? fAllowedRoles.includes("all")
-                        : !fAllowedRoles.includes("all") && fAllowedRoles.includes(roleItem.id));
+                    const isAdministrator = roleItem.id === ADMINISTRATOR_ROLE;
+                    const isPublic = roleItem.id === PUBLIC_ROLE;
+                    const isAllRoles = roleItem.id === ALL_ROLES;
+
+                    let isChecked = false;
+                    if (isAdministrator) {
+                      isChecked = true;
+                    } else if (isPublic) {
+                      isChecked = fAllowedRoles.includes(PUBLIC_ROLE);
+                    } else if (isAllRoles) {
+                      isChecked = !fAllowedRoles.includes(PUBLIC_ROLE) &&
+                        (fAllowedRoles.includes(ALL_ROLES) || SPECIFIC_ROLES.every((r) => fAllowedRoles.includes(r)));
+                    } else {
+                      // specific role
+                      isChecked = !fAllowedRoles.includes(PUBLIC_ROLE) &&
+                        (fAllowedRoles.includes(ALL_ROLES) || fAllowedRoles.includes(roleItem.id));
+                    }
 
                     return (
                       <label
@@ -927,19 +959,48 @@ function AdminPanel({
                           disabled={isAdministrator}
                           aria-label={isAdministrator ? "Administrator always has access" : roleItem.label}
                           onChange={(e) => {
-                            if (roleItem.id === "all") {
-                              setFAllowedRoles(["all"]);
-                            } else {
-                              let next = fAllowedRoles.filter((r) => r !== "all");
+                            if (isAdministrator) return;
+
+                            if (isPublic) {
                               if (e.target.checked) {
-                                next.push(roleItem.id);
+                                setFAllowedRoles([PUBLIC_ROLE]);
                               } else {
-                                next = next.filter((r) => r !== roleItem.id);
+                                // Default to admin only when public is unchecked and nothing else was selected
+                                setFAllowedRoles([ADMINISTRATOR_ROLE]);
                               }
-                              if (next.length === 0) {
-                                next = ["all"];
+                              return;
+                            }
+
+                            // User clicked All Roles or a specific role
+                            let currentSpecifics: string[] = [];
+                            if (fAllowedRoles.includes(ALL_ROLES)) {
+                              currentSpecifics = [...SPECIFIC_ROLES];
+                            } else {
+                              currentSpecifics = fAllowedRoles.filter((r) => (SPECIFIC_ROLES as readonly string[]).includes(r));
+                            }
+
+                            if (isAllRoles) {
+                              if (e.target.checked) {
+                                setFAllowedRoles([ALL_ROLES, ADMINISTRATOR_ROLE, ...SPECIFIC_ROLES]);
+                              } else {
+                                // Uncheck all specific roles -> admin only
+                                setFAllowedRoles([ADMINISTRATOR_ROLE]);
                               }
-                              setFAllowedRoles(next);
+                            } else {
+                              let nextSpecifics: string[];
+                              if (e.target.checked) {
+                                nextSpecifics = Array.from(new Set([...currentSpecifics, roleItem.id]));
+                              } else {
+                                nextSpecifics = currentSpecifics.filter((r) => r !== roleItem.id);
+                              }
+
+                              if (nextSpecifics.length === 0) {
+                                setFAllowedRoles([ADMINISTRATOR_ROLE]);
+                              } else if (SPECIFIC_ROLES.every((r) => nextSpecifics.includes(r))) {
+                                setFAllowedRoles([ALL_ROLES, ADMINISTRATOR_ROLE, ...SPECIFIC_ROLES]);
+                              } else {
+                                setFAllowedRoles([ADMINISTRATOR_ROLE, ...nextSpecifics]);
+                              }
                             }
                           }}
                         />
@@ -948,6 +1009,15 @@ function AdminPanel({
                     );
                   })}
                 </div>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+                  {fAllowedRoles.includes(PUBLIC_ROLE)
+                    ? "🌐 Public: Anyone can view and launch this app without signing in."
+                    : fAllowedRoles.includes(ALL_ROLES) || SPECIFIC_ROLES.every((r) => fAllowedRoles.includes(r))
+                    ? "👥 All Roles: Any signed-in user (Intern, Student, Lecturer, Admin) can view and launch this app."
+                    : fAllowedRoles.some((r) => (SPECIFIC_ROLES as readonly string[]).includes(r))
+                    ? `🔒 Restricted: Visible only to Administrators and selected roles (${fAllowedRoles.filter((r) => (SPECIFIC_ROLES as readonly string[]).includes(r)).map((r) => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")}).`
+                    : "🛡️ Admin Only: Unticked - available only for Administrators."}
+                </p>
               </div>
             </div>
 
