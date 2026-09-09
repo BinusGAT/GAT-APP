@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import {
   Plus,
@@ -15,6 +15,7 @@ import {
   Shield,
   User,
   MagnifyingGlass,
+  Funnel,
   GraduationCap,
   ChalkboardTeacher,
   Lightning,
@@ -1076,6 +1077,7 @@ function UserManagementTab() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedRole, setSelectedRole] = useState<string>("all");
 
   // Modal State
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -1198,9 +1200,49 @@ function UserManagementTab() {
     }
   };
 
-  const filteredUsers = users.filter((u) =>
-    u.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
-  );
+  const getRolePriority = (roleName: string) => {
+    const r = roleName?.toLowerCase() || "";
+    if (r === "admin" || r === "superadmin" || r === "administrator") return 0;
+    if (r === "lecturer") return 1;
+    return 2;
+  };
+
+  const getUserTier = (roleNames: string[]) => {
+    if (roleNames.some((r) => {
+      const l = r.toLowerCase();
+      return l === "admin" || l === "superadmin" || l === "administrator";
+    })) return 0;
+    if (roleNames.some((r) => r.toLowerCase() === "lecturer")) return 1;
+    return 2;
+  };
+
+  const filteredUsers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let matches = users;
+
+    if (q) {
+      matches = matches.filter((u) => u.name.toLowerCase().includes(q));
+    }
+
+    if (selectedRole !== "all") {
+      matches = matches.filter((u) => {
+        const uRoles = u.role_names && u.role_names.length > 0 ? u.role_names : [u.role_name || "student"];
+        return uRoles.some((r) => r.toLowerCase() === selectedRole.toLowerCase());
+      });
+    }
+
+    return [...matches].sort((a, b) => {
+      const aRoles = a.role_names && a.role_names.length > 0 ? a.role_names : [a.role_name || "student"];
+      const bRoles = b.role_names && b.role_names.length > 0 ? b.role_names : [b.role_name || "student"];
+      const tierA = getUserTier(aRoles);
+      const tierB = getUserTier(bRoles);
+      if (tierA !== tierB) return tierA - tierB;
+      if (bRoles.length !== aRoles.length) {
+        return bRoles.length - aRoles.length;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    });
+  }, [users, searchQuery, selectedRole]);
 
   // Superadmin Passcode Management state
   const [currPass, setCurrPass] = useState("");
@@ -1326,27 +1368,65 @@ function UserManagementTab() {
         </button>
       </div>
 
-      {/* Name Search Bar */}
-      <div style={{ position: "relative", marginBottom: 16 }}>
-        <MagnifyingGlass
-          size={16}
-          weight="bold"
-          style={{
-            position: "absolute",
-            left: 12,
-            top: "50%",
-            transform: "translateY(-50%)",
-            color: "var(--text-secondary)",
-          }}
-        />
-        <input
-          type="text"
-          className="form-input"
-          placeholder="Search by name..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          style={{ paddingLeft: 36, width: "100%" }}
-        />
+      {/* Search Bar & Role Filter */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "1 1 240px" }}>
+          <MagnifyingGlass
+            size={16}
+            weight="bold"
+            style={{
+              position: "absolute",
+              left: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "var(--text-secondary)",
+            }}
+          />
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search by name..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ paddingLeft: 36, width: "100%" }}
+          />
+        </div>
+
+        <div style={{ position: "relative", minWidth: 160, flex: "0 1 190px" }}>
+          <Funnel
+            size={16}
+            weight="bold"
+            style={{
+              position: "absolute",
+              left: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "var(--text-secondary)",
+              pointerEvents: "none",
+            }}
+          />
+          <select
+            className="form-input"
+            value={selectedRole}
+            onChange={(e) => setSelectedRole(e.target.value)}
+            style={{ paddingLeft: 34, paddingRight: 28, width: "100%", cursor: "pointer" }}
+            aria-label="Filter by role"
+          >
+            <option value="all">All Roles</option>
+            {[...roles]
+              .sort((a, b) => {
+                const pA = getRolePriority(a.name);
+                const pB = getRolePriority(b.name);
+                if (pA !== pB) return pA - pB;
+                return a.name.localeCompare(b.name);
+              })
+              .map((r) => (
+                <option key={r.id} value={r.name.toLowerCase()}>
+                  {r.name.charAt(0).toUpperCase() + r.name.slice(1)}
+                </option>
+              ))}
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -1356,7 +1436,13 @@ function UserManagementTab() {
       ) : (
         <div className="config-list">
           {filteredUsers.map((u) => {
-            const roleList = u.role_names && u.role_names.length > 0 ? u.role_names : [u.role_name || "student"];
+            const rawRoles = u.role_names && u.role_names.length > 0 ? u.role_names : [u.role_name || "student"];
+            const roleList = [...rawRoles].sort((a, b) => {
+              const pA = getRolePriority(a);
+              const pB = getRolePriority(b);
+              if (pA !== pB) return pA - pB;
+              return a.localeCompare(b);
+            });
             return (
               <div key={u.id} className="config-item" style={{ gap: 16 }}>
                 <div
@@ -1404,7 +1490,9 @@ function UserManagementTab() {
 
           {filteredUsers.length === 0 && (
             <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", fontSize: 14 }}>
-              {searchQuery ? `No user found matching "${searchQuery}".` : "No users found in Central Auth database."}
+              {searchQuery || selectedRole !== "all"
+                ? "No users found matching the selected criteria."
+                : "No users found in Central Auth database."}
             </div>
           )}
         </div>

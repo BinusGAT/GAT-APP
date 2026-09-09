@@ -457,23 +457,57 @@ export async function getUsers(): Promise<UserWithRole[]> {
       GROUP BY u.id
       ORDER BY u.id ASC
     `);
-    return res.rows.map((row) => {
+    const usersList = res.rows.map((row) => {
       const roleIdsStr = String(row.role_ids_str || "2");
       const roleNamesStr = String(row.role_names_str || "student");
       const role_ids = roleIdsStr.split(",").map((id) => Number(id.trim())).filter((n) => !isNaN(n));
       const role_names = roleNamesStr.split(",").map((n) => n.trim());
+
+      const getRolePriority = (roleName: string) => {
+        const r = roleName.toLowerCase();
+        if (r === "admin" || r === "superadmin" || r === "administrator") return 0;
+        if (r === "lecturer") return 1;
+        return 2;
+      };
+
+      const sortedRoleNames = [...role_names].sort((a, b) => {
+        const pA = getRolePriority(a);
+        const pB = getRolePriority(b);
+        if (pA !== pB) return pA - pB;
+        return a.localeCompare(b);
+      });
+
       return {
         id: Number(row.id),
         email: String(row.email),
         nim: row.nim ? String(row.nim) : null,
         name: String(row.name),
         role_id: role_ids[0] || 2,
-        role_name: role_names.join(", "),
+        role_name: sortedRoleNames.join(", "),
         role_ids: role_ids.length > 0 ? role_ids : [2],
-        role_names: role_names.length > 0 ? role_names : ["student"],
+        role_names: sortedRoleNames.length > 0 ? sortedRoleNames : ["student"],
         created_at: "",
         updated_at: "",
       };
+    });
+
+    const getUserTier = (roleNames: string[]) => {
+      if (roleNames.some((r) => {
+        const l = r.toLowerCase();
+        return l === "admin" || l === "superadmin" || l === "administrator";
+      })) return 0;
+      if (roleNames.some((r) => r.toLowerCase() === "lecturer")) return 1;
+      return 2;
+    };
+
+    return usersList.sort((a, b) => {
+      const tierA = getUserTier(a.role_names);
+      const tierB = getUserTier(b.role_names);
+      if (tierA !== tierB) return tierA - tierB;
+      if (b.role_names.length !== a.role_names.length) {
+        return b.role_names.length - a.role_names.length;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
     });
   } catch (error) {
     console.error("Error fetching users:", error);
