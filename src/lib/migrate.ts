@@ -233,6 +233,30 @@ export const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: "008_init_active_sessions",
+    name: "Initialize active_sessions table with indices",
+    target: "app",
+    up: async ({ client }) => {
+      await client.execute(`
+        CREATE TABLE IF NOT EXISTS active_sessions (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          email TEXT NOT NULL,
+          name TEXT NOT NULL,
+          active_role TEXT NOT NULL,
+          roles TEXT NOT NULL,
+          ip_hash TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          expires_at INTEGER NOT NULL
+        )
+      `);
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_active_sessions_user ON active_sessions(user_id)`);
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_active_sessions_expires ON active_sessions(expires_at)`);
+    },
+  },
 ];
 
 async function ensureMigrationTable(dbClient: Client) {

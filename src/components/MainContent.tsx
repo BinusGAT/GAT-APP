@@ -410,7 +410,7 @@ function AdminPanel({
             <House size={16} weight="bold" />
             Home
           </button>
-          <button type="button" className={`settings-tab-btn ${(["audit", "health", "announcements", "analytics"] as string[]).includes(activeTab) ? "active" : ""}`} onClick={() => setActiveTab("health")}>
+          <button type="button" className={`settings-tab-btn ${(["audit", "health", "announcements", "analytics", "sessions"] as string[]).includes(activeTab) ? "active" : ""}`} onClick={() => setActiveTab("health")}>
             <Pulse size={16} weight="bold" />Operations
           </button>
           <button type="button" className={`settings-tab-btn ${activeTab === "superadmin" || activeTab === "users" ? "active" : ""}`} onClick={() => setActiveTab(isSuperadminUnlocked ? "users" : "superadmin")}>
@@ -418,11 +418,12 @@ function AdminPanel({
           </button>
         </nav>
 
-        {(["audit", "health", "announcements", "analytics"] as string[]).includes(activeTab) && (
+        {(["audit", "health", "announcements", "analytics", "sessions"] as string[]).includes(activeTab) && (
           <nav className="settings-tabs settings-subnav" aria-label="Operations tools">
             <button type="button" className={`settings-tab-btn ${activeTab === "health" ? "active" : ""}`} onClick={() => setActiveTab("health")}><Pulse size={15}/>Health</button>
             <button type="button" className={`settings-tab-btn ${activeTab === "announcements" ? "active" : ""}`} onClick={() => setActiveTab("announcements")}><Megaphone size={15}/>Announcements</button>
             <button type="button" className={`settings-tab-btn ${activeTab === "analytics" ? "active" : ""}`} onClick={() => setActiveTab("analytics")}><ChartBar size={15}/>Analytics</button>
+            <button type="button" className={`settings-tab-btn ${activeTab === "sessions" ? "active" : ""}`} onClick={() => setActiveTab("sessions")}><Users size={15}/>Sessions</button>
             <button type="button" className={`settings-tab-btn ${activeTab === "audit" ? "active" : ""}`} onClick={() => setActiveTab("audit")}><ClipboardText size={15}/>Audit</button>
           </nav>
         )}
@@ -434,7 +435,7 @@ function AdminPanel({
           </div>
         )}
 
-        {(["audit", "health", "announcements", "analytics"] as string[]).includes(activeTab) && (
+        {(["audit", "health", "announcements", "analytics", "sessions"] as string[]).includes(activeTab) && (
           <SettingsOperations view={activeTab as OperationsView} />
         )}
 

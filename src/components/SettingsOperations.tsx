@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowClockwise, CaretDown, CaretRight, CheckCircle, PencilSimple, Plus, Trash, Warning, XCircle } from "@phosphor-icons/react";
+import { ArrowClockwise, CaretDown, CaretRight, CheckCircle, PencilSimple, Plus, Trash, Warning, XCircle, Users } from "@phosphor-icons/react";
 import {
   Announcement,
   deleteAnnouncement,
@@ -12,6 +12,9 @@ import {
   refreshAllApplicationHealth,
   refreshApplicationHealth,
   saveAnnouncement,
+  ActiveSession,
+  getActiveSessions,
+  revokeUserSession,
 } from "@/lib/actions";
 import {
   parseAllowedRoles,
@@ -20,9 +23,10 @@ import {
   ALL_ROLES,
   ADMINISTRATOR_ROLE,
   SPECIFIC_ROLES,
+  formatRoleName,
 } from "@/lib/permissions";
 
-export type OperationsView = "audit" | "health" | "announcements" | "analytics";
+export type OperationsView = "audit" | "health" | "announcements" | "analytics" | "sessions";
 
 type GenericRow = Record<string, string | number | null>;
 
@@ -65,6 +69,10 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
   const [health, setHealth] = useState<GenericRow[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [analytics, setAnalytics] = useState<{ totalLaunches: number; uniqueUsers: number; topApps: Array<{ name: string; launches: number }> }>({ totalLaunches: 0, uniqueUsers: 0, topApps: [] });
+  const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [sessionFilter, setSessionFilter] = useState("");
+  const [sessionPage, setSessionPage] = useState(1);
   const [checkingId, setCheckingId] = useState<number | null>(null);
   const [checkingAll, setCheckingAll] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -88,6 +96,7 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
       if (view === "health") setHealth(await getApplicationHealth());
       if (view === "announcements") setAnnouncements(await getAnnouncements());
       if (view === "analytics") setAnalytics(await getUsageAnalytics());
+      if (view === "sessions") { setSessions(await getActiveSessions()); setSessionPage(1); }
     } catch { setError("Unable to load this operational view."); }
     finally { setLoading(false); }
   }, [view]);
@@ -164,6 +173,30 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
     });
   };
 
+  const handleRevokeSession = async (sessionId: string, userName: string) => {
+    if (!confirm(`Are you sure you want to terminate the active session for ${userName}?`)) return;
+    setRevokingId(sessionId);
+    setError("");
+    const res = await revokeUserSession(sessionId);
+    if (!res.success) {
+      setError(res.error || "Failed to revoke session.");
+    }
+    await load();
+    setRevokingId(null);
+  };
+
+  const filteredSessions = useMemo(() => {
+    const query = sessionFilter.trim().toLowerCase();
+    if (!query) return sessions;
+    return sessions.filter((sess) =>
+      [sess.name, sess.email, sess.active_role, sess.roles.join(" "), formatUtcForUser(sess.last_active_at)]
+        .some((val) => String(val || "").toLowerCase().includes(query))
+    );
+  }, [sessionFilter, sessions]);
+  const sessionPageCount = Math.max(1, Math.ceil(filteredSessions.length / 10));
+  const currentSessionPage = Math.min(sessionPage, sessionPageCount);
+  const visibleSessions = filteredSessions.slice((currentSessionPage - 1) * 10, currentSessionPage * 10);
+
   const checkAllHealth = async () => {
     setCheckingAll(true); setError("");
     const result = await refreshAllApplicationHealth();
@@ -236,6 +269,149 @@ export default function SettingsOperations({ view }: { view: OperationsView }) {
         <div className="ops-heading"><div><h2>Usage analytics</h2><p>Application launches during the last 30 days.</p></div><button className="btn-secondary" onClick={() => void load()}><ArrowClockwise size={15}/>Refresh</button></div>
         <div className="ops-metrics"><div><span>Total launches</span><strong>{analytics.totalLaunches}</strong></div><div><span>Active users</span><strong>{analytics.uniqueUsers}</strong></div><div><span>Tracked apps</span><strong>{analytics.topApps.length}</strong></div></div>
         <div className="ops-ranking"><h3>Most used applications</h3>{analytics.topApps.map((app, index) => { const max = analytics.topApps[0]?.launches || 1; return <div className="ops-rank-row" key={app.name}><span>{index + 1}</span><strong>{app.name}</strong><div><i style={{ width: `${Math.max(4, app.launches / max * 100)}%` }}/></div><b>{app.launches}</b></div>; })}{analytics.topApps.length === 0 && <div className="ops-empty">Usage will appear after users open applications.</div>}</div>
+      </>}
+
+      {view === "sessions" && <>
+        <div className="ops-heading">
+          <div>
+            <h2>Active User Sessions</h2>
+            <p>Users currently holding a valid login session in the portal.</p>
+          </div>
+          <button className="btn-secondary" onClick={() => void load()}>
+            <ArrowClockwise size={15} />Refresh
+          </button>
+        </div>
+        <div className="ops-filter-bar">
+          <input
+            className="form-input"
+            type="search"
+            value={sessionFilter}
+            onChange={(event) => { setSessionFilter(event.target.value); setSessionPage(1); }}
+            placeholder="Filter by name, email, or role…"
+            aria-label="Filter active user sessions"
+          />
+          <span>{filteredSessions.length} active {filteredSessions.length === 1 ? "session" : "sessions"}</span>
+        </div>
+        <div className="ops-table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Active Role</th>
+                <th>Signed In</th>
+                <th>Last Active</th>
+                <th style={{ textAlign: "right" }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleSessions.map((sess) => (
+                <tr key={sess.id}>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: "50%",
+                          background: sess.is_current ? "#4F46E5" : "var(--primary-light, #EEF2FF)",
+                          color: sess.is_current ? "#fff" : "#4F46E5",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 700,
+                          fontSize: 13,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {sess.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                          {sess.name}
+                          {sess.is_current && (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: "#EEF2FF",
+                                color: "#4F46E5",
+                                border: "1px solid rgba(79, 70, 229, 0.2)",
+                              }}
+                            >
+                              You
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                          {sess.email}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <span
+                      className="badge-source-type"
+                      style={{
+                        background: sess.active_role === "administrator" ? "rgba(239, 68, 68, 0.1)" : "rgba(79, 70, 229, 0.1)",
+                        color: sess.active_role === "administrator" ? "#ef4444" : "#4F46E5",
+                        textTransform: "none",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {formatRoleName(sess.active_role)}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                    {formatUtcForUser(sess.created_at)}
+                  </td>
+                  <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                    {formatUtcForUser(sess.last_active_at)}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={revokingId === sess.id}
+                      onClick={() => handleRevokeSession(sess.id, sess.name)}
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: 12,
+                        color: "var(--color-danger, #ef4444)",
+                        borderColor: "rgba(239, 68, 68, 0.3)",
+                      }}
+                    >
+                      {revokingId === sess.id ? "Revoking…" : sess.is_current ? "Log out" : "Revoke"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {visibleSessions.length === 0 && (
+            <div className="ops-empty">No active user sessions match this filter.</div>
+          )}
+        </div>
+        <div className="ops-pagination">
+          <span>Page {currentSessionPage} of {sessionPageCount} · 10 sessions per page</span>
+          <div>
+            <button
+              className="btn-secondary"
+              disabled={currentSessionPage === 1}
+              onClick={() => setSessionPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={currentSessionPage === sessionPageCount}
+              onClick={() => setSessionPage((p) => Math.min(sessionPageCount, p + 1))}
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </>}
     </section>
   );

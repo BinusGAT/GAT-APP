@@ -6,6 +6,7 @@ export const SUPERADMIN_ELEVATION_SECONDS = 60 * 30;
 
 export type SessionPayload = {
   kind: "user" | "superadmin";
+  sessionId?: string;
   userId?: number;
   name?: string;
   email?: string;

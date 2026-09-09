@@ -4,7 +4,7 @@ import dns from "node:dns/promises";
 import net from "node:net";
 import crypto from "node:crypto";
 import { client, authClient, initDb, Button, UserWithRole, Role } from "./db";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import {
   createPasscodeHash,
   createSessionToken,
@@ -60,7 +60,27 @@ async function ensureDb() {
 async function readSession(): Promise<SessionPayload | null> {
   try {
     const cookieStore = await cookies();
-    return verifySessionToken(cookieStore.get(SESSION_COOKIE)?.value);
+    const payload = verifySessionToken(cookieStore.get(SESSION_COOKIE)?.value);
+    if (!payload) return null;
+
+    // If payload has a tracked sessionId, verify it has not been revoked
+    if (payload.sessionId) {
+      await ensureDb();
+      const res = await client.execute({
+        sql: "SELECT id FROM active_sessions WHERE id = ? AND expires_at > ?",
+        args: [payload.sessionId, Date.now()],
+      });
+      if (res.rows.length === 0) {
+        return null;
+      }
+      // Periodically update last_active_at (fire-and-forget)
+      void client.execute({
+        sql: "UPDATE active_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?",
+        args: [payload.sessionId],
+      }).catch(() => {});
+    }
+
+    return payload;
   } catch {
     return null;
   }
@@ -207,16 +227,42 @@ export async function verifyUserCredentials(
     const roleNames = roleNamesStr.split(",").map((r) => r.trim());
     const normalizedRoles = normalizeRoles(roleNames);
     const primaryRole = normalizedRoles.find(isAdministratorRole) || normalizedRoles[0] || "student";
+    const sessionId = crypto.randomUUID();
+    const expiresAt = Date.now() + SESSION_MAX_AGE_SECONDS * 1000;
+
     const sessionCreated = await setSession({
       kind: "user",
+      sessionId,
       userId: Number(userRow.id),
       name: String(userRow.name),
       email: String(userRow.email),
       roles: normalizedRoles,
       activeRole: primaryRole,
-    });
+    }, expiresAt);
     if (!sessionCreated) {
       return { success: false, error: "Server session secret is missing or too short." };
+    }
+
+    try {
+      const headerList = await headers();
+      const userAgent = headerList.get("user-agent") || "";
+      await client.execute({
+        sql: `INSERT OR REPLACE INTO active_sessions (id, user_id, email, name, active_role, roles, ip_hash, user_agent, expires_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          sessionId,
+          Number(userRow.id),
+          String(userRow.email),
+          String(userRow.name),
+          primaryRole,
+          normalizedRoles.join(","),
+          ipHash,
+          userAgent.slice(0, 200),
+          expiresAt,
+        ],
+      });
+    } catch (sessionDbErr) {
+      console.error("Failed to insert active session record:", sessionDbErr);
     }
 
     await resetRateLimit(accountKey);
@@ -329,6 +375,17 @@ export async function updateSuperadminPasscode(
 
 export async function logout(): Promise<void> {
   await ensureDb();
+  const session = await readSession();
+  if (session?.sessionId) {
+    try {
+      await client.execute({
+        sql: "DELETE FROM active_sessions WHERE id = ?",
+        args: [session.sessionId],
+      });
+    } catch (e) {
+      console.error("Failed to remove active session on logout:", e);
+    }
+  }
   await writeAudit("user.logout", "session");
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE);
@@ -364,6 +421,16 @@ export async function switchActiveRole(role: string): Promise<{ success: boolean
   const requested = normalizeRole(role);
   if (!canSwitchToRole(session.roles, requested)) return { success: false, error: "Role is not assigned to this user." };
   const saved = await setSession({ ...session, activeRole: requested }, session.expiresAt);
+  if (saved && session.sessionId) {
+    try {
+      await client.execute({
+        sql: "UPDATE active_sessions SET active_role = ?, last_active_at = CURRENT_TIMESTAMP WHERE id = ?",
+        args: [requested, session.sessionId],
+      });
+    } catch (e) {
+      console.error("Failed to update active_role in active_sessions:", e);
+    }
+  }
   return saved ? { success: true, activeRole: requested } : { success: false, error: "Unable to update session." };
 }
 
@@ -960,6 +1027,92 @@ export async function getUsageAnalytics(): Promise<{
     totalLaunches: Number(summary.rows[0]?.total || 0), uniqueUsers: Number(summary.rows[0]?.users || 0),
     topApps: top.rows.map((row) => ({ name: String(row.name), launches: Number(row.launches) })),
   };
+}
+
+// ── Active Sessions Operations ────────────────────────────────
+export type ActiveSession = {
+  id: string;
+  user_id: number;
+  email: string;
+  name: string;
+  active_role: string;
+  roles: string[];
+  ip_hash: string | null;
+  user_agent: string | null;
+  created_at: string;
+  last_active_at: string;
+  expires_at: number;
+  is_current?: boolean;
+};
+
+export async function getActiveSessions(): Promise<ActiveSession[]> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return [];
+  const currentSession = await readSession();
+  const now = Date.now();
+
+  // Purge expired sessions
+  try {
+    await client.execute({
+      sql: "DELETE FROM active_sessions WHERE expires_at <= ?",
+      args: [now],
+    });
+  } catch (err) {
+    console.error("Failed to clean expired sessions:", err);
+  }
+
+  const result = await client.execute({
+    sql: "SELECT * FROM active_sessions WHERE expires_at > ? ORDER BY last_active_at DESC",
+    args: [now],
+  });
+
+  return result.rows.map((row) => {
+    const rolesRaw = String(row.roles || "");
+    const roles = rolesRaw.split(",").map((r) => r.trim()).filter(Boolean);
+    const sessionId = String(row.id);
+    return {
+      id: sessionId,
+      user_id: Number(row.user_id),
+      email: String(row.email),
+      name: String(row.name),
+      active_role: String(row.active_role),
+      roles,
+      ip_hash: row.ip_hash ? String(row.ip_hash) : null,
+      user_agent: row.user_agent ? String(row.user_agent) : null,
+      created_at: String(row.created_at),
+      last_active_at: String(row.last_active_at),
+      expires_at: Number(row.expires_at),
+      is_current: currentSession?.sessionId === sessionId,
+    };
+  });
+}
+
+export async function revokeUserSession(sessionId: string): Promise<{ success: boolean; error?: string }> {
+  await ensureDb();
+  if (!(await requireAdministrator())) return { success: false, error: "Unauthorized" };
+  if (!sessionId) return { success: false, error: "Invalid session ID" };
+
+  try {
+    const res = await client.execute({
+      sql: "SELECT email, name FROM active_sessions WHERE id = ?",
+      args: [sessionId],
+    });
+    const targetUser = res.rows[0];
+
+    await client.execute({
+      sql: "DELETE FROM active_sessions WHERE id = ?",
+      args: [sessionId],
+    });
+
+    await writeAudit("session.revoked", "session", sessionId, {
+      revoked_email: targetUser?.email ? String(targetUser.email) : null,
+      revoked_name: targetUser?.name ? String(targetUser.name) : null,
+    });
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: errorMessage(err, "Failed to revoke session") };
+  }
 }
 
 // ── Consolidated Bootstrap Action ─────────────────────────────

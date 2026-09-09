@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 
 import Home from "@/components/Home";
@@ -83,14 +83,15 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
   const [loading, setLoading] = useState(false);
 
   // User Authentication & Role State
+  const hasLoggedOutRef = useRef(false);
   const [currentUser, setCurrentUser] = useState<LoggedInUser | null>(
     () => store.user || initialData?.user || null
   );
   const [sessionLoaded, setSessionLoaded] = useState(true);
 
-  // Sync if initialData provides a user and client store had none
+  // Sync if initialData provides a user and client store had none (unless user explicitly logged out)
   useEffect(() => {
-    if (initialData?.user && !currentUser) {
+    if (initialData?.user && !currentUser && !hasLoggedOutRef.current && !getClientStore().user && !getClientStore().isLoaded) {
       setCurrentUser(initialData.user);
       setClientStoreUser(initialData.user);
     }
@@ -110,6 +111,7 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
   // Modal open states
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRoleSwitchModalOpen, setIsRoleSwitchModalOpen] = useState(false);
+  const [isSwitchingRole, setIsSwitchingRole] = useState(false);
 
   // Login Form fields
   const [loginEmail, setLoginEmail] = useState("");
@@ -268,6 +270,7 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
           activeRole: defaultRole,
         };
 
+        hasLoggedOutRef.current = false;
         setClientStoreUser(userObj);
         setCurrentUser(userObj);
         await fetchButtons();
@@ -286,6 +289,7 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
 
   // User Logout handler
   const handleUserLogout = async () => {
+    hasLoggedOutRef.current = true;
     await logout();
     resetClientStore();
     setCurrentUser(null);
@@ -297,23 +301,40 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
 
   // Switch Active Role handler
   const handleSelectActiveRole = async (roleName: string) => {
-    if (!currentUser) return;
-    const result = await switchActiveRole(roleName);
-    if (!result.success || !result.activeRole) return;
-    const isNewAdmin = isAdministratorRole(result.activeRole);
-
-    const updatedUser: LoggedInUser = {
-      ...currentUser,
-      activeRole: isNewAdmin ? "Administrator" : result.activeRole,
-    };
-
-    setClientStoreUser(updatedUser);
-    setCurrentUser(updatedUser);
+    if (!currentUser || isSwitchingRole) return;
     setIsRoleSwitchModalOpen(false);
-    await fetchButtons();
+    setIsSwitchingRole(true);
 
-    if (!isNewAdmin && currentSlug === "settings") {
-      navigateToSlug("home");
+    try {
+      const [result] = await Promise.all([
+        switchActiveRole(roleName),
+        // Smooth transition floor so the user doesn't see sudden DOM popping
+        new Promise((resolve) => setTimeout(resolve, 400)),
+      ]);
+
+      if (!result.success || !result.activeRole) {
+        setIsSwitchingRole(false);
+        return;
+      }
+
+      const isNewAdmin = isAdministratorRole(result.activeRole);
+
+      const updatedUser: LoggedInUser = {
+        ...currentUser,
+        activeRole: isNewAdmin ? "Administrator" : result.activeRole,
+      };
+
+      setClientStoreUser(updatedUser);
+      setCurrentUser(updatedUser);
+      await fetchButtons();
+
+      if (!isNewAdmin && currentSlug === "settings") {
+        navigateToSlug("home");
+      }
+    } catch (err) {
+      console.error("Failed to switch role:", err);
+    } finally {
+      setIsSwitchingRole(false);
     }
   };
 
@@ -658,6 +679,23 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Role Switching Transition Overlay */}
+      {isSwitchingRole && (
+        <div className="saving-overlay" style={{ zIndex: 10000 }}>
+          <div className="saving-card" style={{ padding: "32px 48px", minWidth: 260 }}>
+            <div className="spinner" />
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
+                Switching role...
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+                Updating accessible applications
+              </div>
+            </div>
           </div>
         </div>
       )}
