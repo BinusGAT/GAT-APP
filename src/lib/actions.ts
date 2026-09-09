@@ -125,7 +125,7 @@ async function setSession(
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: Math.ceil((expiresAt - now) / 1000),
-    sameSite: "strict",
+    sameSite: "lax",
   });
   return true;
 }

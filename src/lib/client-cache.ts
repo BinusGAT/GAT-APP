@@ -31,7 +31,9 @@ export function getClientStore(): Readonly<ClientStoreState> {
 }
 
 export function setClientStoreBootstrap(data: AppBootstrapData): void {
-  store.user = data.user;
+  if (data.user) {
+    store.user = data.user;
+  }
   store.isLoaded = true;
   store.homeSettings = data.homeSettings;
   store.favorites = data.favorites;

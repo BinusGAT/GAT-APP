@@ -4,9 +4,10 @@ import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { MagnifyingGlass, Star, Megaphone } from "@phosphor-icons/react";
-import { getHomeSettings, getButtons, getUserFavorites, toggleUserFavorite, getActiveAnnouncements, recordApplicationOpen, Announcement } from "@/lib/actions";
+import { getHomeSettings, getButtons, getUserFavorites, toggleUserFavorite, getActiveAnnouncements, Announcement } from "@/lib/actions";
 import { Button } from "@/lib/db";
 import { getIconComponent } from "./Sidebar";
+import { logApplicationOpen } from "./GatAppClient";
 
 function slugify(text: string): string {
   return text
@@ -263,7 +264,7 @@ export default function Home({
   };
 
   const handleAppClick = (btn: Button) => {
-    void recordApplicationOpen(btn.id);
+    logApplicationOpen(btn.id);
     if (btn.source_type === "link") {
       window.open(btn.source, "_blank", "noopener,noreferrer");
     } else {

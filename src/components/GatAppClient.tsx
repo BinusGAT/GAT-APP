@@ -13,7 +13,6 @@ import {
   verifyUserCredentials,
   logout,
   switchActiveRole,
-  recordApplicationOpen,
   Announcement,
   AppBootstrapData,
 } from "@/lib/actions";
@@ -48,6 +47,24 @@ export function slugify(text: string): string {
     .replace(/[-\s]+/g, "-");
 }
 
+// Fire-and-forget non-blocking usage logger to prevent Next.js Server Action revalidation
+export function logApplicationOpen(buttonId: number): void {
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      const blob = new Blob([JSON.stringify({ buttonId })], { type: "application/json" });
+      if (navigator.sendBeacon("/api/usage", blob)) return;
+    }
+  } catch {
+    // fallback to fetch
+  }
+  fetch("/api/usage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ buttonId }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 export type LoggedInUser = CachedUser;
 
 interface GatAppClientProps {
@@ -66,8 +83,18 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
   const [loading, setLoading] = useState(false);
 
   // User Authentication & Role State
-  const [currentUser, setCurrentUser] = useState<LoggedInUser | null>(() => (initialData !== undefined ? initialData.user : store.user));
+  const [currentUser, setCurrentUser] = useState<LoggedInUser | null>(
+    () => store.user || initialData?.user || null
+  );
   const [sessionLoaded, setSessionLoaded] = useState(true);
+
+  // Sync if initialData provides a user and client store had none
+  useEffect(() => {
+    if (initialData?.user && !currentUser) {
+      setCurrentUser(initialData.user);
+      setClientStoreUser(initialData.user);
+    }
+  }, [initialData, currentUser]);
 
   // Bootstrap data for Home view
   const [homeSettings, setHomeSettings] = useState<{ type: string; value: string } | undefined>(
@@ -199,7 +226,7 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const handleButtonClick = (button: Button) => {
-    void recordApplicationOpen(button.id);
+    logApplicationOpen(button.id);
     if (button.source_type === "link") {
       window.open(button.source, "_blank", "noopener,noreferrer");
       return;
