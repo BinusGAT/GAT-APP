@@ -621,6 +621,7 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
                     role="button"
                     tabIndex={0}
                     aria-pressed={isActive}
+                    className={`role-select-card ${isActive ? "active" : ""}`}
                     onClick={() => handleSelectActiveRole(roleName)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
@@ -628,29 +629,10 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
                         handleSelectActiveRole(roleName);
                       }
                     }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 14,
-                      padding: "14px 16px",
-                      borderRadius: 12,
-                      border: `1.5px solid ${isActive ? "#4F46E5" : "var(--border-color)"}`,
-                      background: isActive ? "#EEF2FF" : "var(--bg-secondary)",
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
                   >
                     <div
-                      style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: 10,
-                        background: iconBg,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                      }}
+                      className="role-card-icon-wrap"
+                      style={{ background: iconBg }}
                     >
                       {icon}
                     </div>
