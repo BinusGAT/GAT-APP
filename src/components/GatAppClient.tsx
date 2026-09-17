@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { toast } from "sonner";
 import Sidebar from "@/components/Sidebar";
 
 import Home from "@/components/Home";
@@ -309,11 +310,11 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
       const [result] = await Promise.all([
         switchActiveRole(roleName),
         // Smooth transition floor so the user doesn't see sudden DOM popping
-        new Promise((resolve) => setTimeout(resolve, 400)),
+        new Promise((resolve) => setTimeout(resolve, 300)),
       ]);
 
       if (!result.success || !result.activeRole) {
-        setIsSwitchingRole(false);
+        toast.error(result.error || "Failed to switch role.");
         return;
       }
 
@@ -326,13 +327,29 @@ export default function GatAppClient({ slug, initialData }: GatAppClientProps) {
 
       setClientStoreUser(updatedUser);
       setCurrentUser(updatedUser);
-      await fetchButtons();
+
+      let newButtons = result.buttons;
+      if (newButtons) {
+        setClientStoreButtons(newButtons);
+        setButtons(newButtons);
+      } else {
+        await fetchButtons();
+        newButtons = getClientStore().buttons;
+      }
 
       if (!isNewAdmin && currentSlug === "settings") {
         navigateToSlug("home");
+      } else if (currentSlug && currentSlug !== "home") {
+        const hasAccessToCurrentApp = (newButtons || []).some(
+          (btn) => slugify(btn.button_name) === currentSlug
+        );
+        if (!hasAccessToCurrentApp) {
+          navigateToSlug("home");
+        }
       }
     } catch (err) {
       console.error("Failed to switch role:", err);
+      toast.error("Failed to switch role. Please check your network connection.");
     } finally {
       setIsSwitchingRole(false);
     }

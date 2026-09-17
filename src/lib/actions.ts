@@ -415,23 +415,69 @@ export async function isSuperadminSessionValid(): Promise<boolean> {
   return canManageUsers(session);
 }
 
-export async function switchActiveRole(role: string): Promise<{ success: boolean; error?: string; activeRole?: string }> {
+// ── Buttons Helper ────────────────────────────────────────────
+function rowToButton(row: Record<string, unknown>): Button {
+  return {
+    id: Number(row.id),
+    button_name: String(row.button_name),
+    source_type: row.source_type as "link" | "embed" | "code",
+    source: String(row.source),
+    icon: String(row.icon ?? "Cube"),
+    image_url: row.image_url ? String(row.image_url) : null,
+    category: row.category ? String(row.category) : "apps",
+    allowed_roles: row.allowed_roles ? String(row.allowed_roles) : "all",
+    order: Number(row.order ?? 0),
+    created_at: String(row.created_at ?? ""),
+    updated_at: String(row.updated_at ?? ""),
+  };
+}
+
+async function fetchAllowedButtons(session: SessionPayload | null): Promise<Button[]> {
+  try {
+    const result = await client.execute(
+      `SELECT * FROM buttons ORDER BY "order" ASC, id ASC`
+    );
+    const buttons = result.rows.map(rowToButton);
+    return buttons.filter((button) => canAccessResource(session, button));
+  } catch (error) {
+    console.error("Error in fetchAllowedButtons:", error);
+    return [];
+  }
+}
+
+export async function switchActiveRole(role: string): Promise<{
+  success: boolean;
+  error?: string;
+  activeRole?: string;
+  buttons?: Button[];
+}> {
   const session = await readSession();
   if (!session || session.kind !== "user") return { success: false, error: "Unauthorized" };
   const requested = normalizeRole(role);
   if (!canSwitchToRole(session.roles, requested)) return { success: false, error: "Role is not assigned to this user." };
-  const saved = await setSession({ ...session, activeRole: requested }, session.expiresAt);
-  if (saved && session.sessionId) {
-    try {
-      await client.execute({
-        sql: "UPDATE active_sessions SET active_role = ?, last_active_at = CURRENT_TIMESTAMP WHERE id = ?",
-        args: [requested, session.sessionId],
-      });
-    } catch (e) {
-      console.error("Failed to update active_role in active_sessions:", e);
-    }
-  }
-  return saved ? { success: true, activeRole: requested } : { success: false, error: "Unable to update session." };
+
+  const updatedSession: SessionPayload = { ...session, activeRole: requested };
+  const saved = await setSession(updatedSession, session.expiresAt);
+  if (!saved) return { success: false, error: "Unable to update session." };
+
+  // Concurrently update active_sessions in the DB and fetch allowed buttons for the updated role
+  const [buttons] = await Promise.all([
+    fetchAllowedButtons(updatedSession),
+    (async () => {
+      if (session.sessionId) {
+        try {
+          await client.execute({
+            sql: "UPDATE active_sessions SET active_role = ?, last_active_at = CURRENT_TIMESTAMP WHERE id = ?",
+            args: [requested, session.sessionId],
+          });
+        } catch (e) {
+          console.error("Failed to update active_role in active_sessions:", e);
+        }
+      }
+    })(),
+  ]);
+
+  return { success: true, activeRole: requested, buttons };
 }
 
 export async function isSessionValid(): Promise<boolean> {
@@ -629,23 +675,6 @@ export async function deleteUser(id: number): Promise<{ success: boolean; error?
   }
 }
 
-// ── Helper ────────────────────────────────────────────────────
-function rowToButton(row: Record<string, unknown>): Button {
-  return {
-    id: Number(row.id),
-    button_name: String(row.button_name),
-    source_type: row.source_type as "link" | "embed" | "code",
-    source: String(row.source),
-    icon: String(row.icon ?? "Cube"),
-    image_url: row.image_url ? String(row.image_url) : null,
-    category: row.category ? String(row.category) : "apps",
-    allowed_roles: row.allowed_roles ? String(row.allowed_roles) : "all",
-    order: Number(row.order ?? 0),
-    created_at: String(row.created_at ?? ""),
-    updated_at: String(row.updated_at ?? ""),
-  };
-}
-
 type ButtonInput = {
   button_name: string;
   source_type: "link" | "embed" | "code";
@@ -670,17 +699,8 @@ function validateButtonInput(data: ButtonInput): string | null {
  */
 export async function getButtons(): Promise<Button[]> {
   await ensureDb();
-  try {
-    const result = await client.execute(
-      `SELECT * FROM buttons ORDER BY "order" ASC, id ASC`
-    );
-    const buttons = result.rows.map(rowToButton);
-    const session = await readSession();
-    return buttons.filter((button) => canAccessResource(session, button));
-  } catch (error) {
-    console.error("Error in getButtons:", error);
-    return [];
-  }
+  const session = await readSession();
+  return fetchAllowedButtons(session);
 }
 
 // ── Admin CRUD ────────────────────────────────────────────────
